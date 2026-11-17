@@ -326,7 +326,8 @@ export function AssistantCitationChip({
               keepMounted
               {...composerFloatingLayerProps}
               side={activeSourceAnchor ? "bottom" : "top"}
-              align="end"
+              // Short quotes near the lane's left edge would push an end-aligned editor over the sidebar.
+              align={activeSourceAnchor ? "start" : "end"}
               anchor={popupAnchor}
               initialFocus={() => {
                 const input = commentInputRef.current;

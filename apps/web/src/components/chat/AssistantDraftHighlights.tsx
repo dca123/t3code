@@ -5,6 +5,10 @@ import {
   resolveAssistantCitationRange,
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
+import {
+  collectAssistantCitations,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 import { draftCitationsForThread } from "./assistantDraftCitations";
 
 const HIGHLIGHT_NAME = "t3-assistant-citation-draft";
@@ -20,15 +24,17 @@ export function AssistantDraftHighlights({
   draftTarget: ComposerThreadTarget;
   onEdit: (citation: AssistantCitation, anchor: AssistantCitationSourceAnchor) => void;
 }) {
-  const prompt = useComposerDraftStore(
-    (store) => store.getComposerDraft(draftTarget)?.prompt ?? "",
+  // A primitive key keeps typing elsewhere in the draft from re-resolving every highlight.
+  const citationKey = useComposerDraftStore((store) =>
+    draftCitationsForThread(store.getComposerDraft(draftTarget)?.prompt ?? "", threadRef)
+      .map(serializeAssistantCitation)
+      .join(" "),
   );
-  const citations = draftCitationsForThread(prompt, threadRef);
   const edit = useEffectEvent(onEdit);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers draft ranges in the browser highlight registry and repairs them when virtualized source DOM changes
   useEffect(() => {
-    if (!viewport || citations.length === 0 || typeof Highlight === "undefined" || !CSS.highlights)
-      return;
+    if (!viewport || !citationKey || typeof Highlight === "undefined" || !CSS.highlights) return;
+    const citations = collectAssistantCitations(citationKey).map(({ citation }) => citation);
     const registry = CSS.highlights;
     const highlight = registry.get(HIGHLIGHT_NAME) ?? new Highlight();
     registry.set(HIGHLIGHT_NAME, highlight);
@@ -115,6 +121,6 @@ export function AssistantDraftHighlights({
       if (highlight.size === 0 && registry.get(HIGHLIGHT_NAME) === highlight)
         registry.delete(HIGHLIGHT_NAME);
     };
-  }, [viewport, citations]);
+  }, [viewport, citationKey]);
   return null;
 }
