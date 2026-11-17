@@ -5,6 +5,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { use, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { MessageSquareIcon } from "lucide-react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -149,15 +150,18 @@ export function AssistantSelectionToolbar({
         return;
       }
       const rects = captured.range.getClientRects();
-      const pointerOnText =
-        pointer !== null &&
-        Array.from(rects).some(
-          (line) =>
-            pointer.x >= line.left - 8 &&
-            pointer.x <= line.right + 8 &&
-            pointer.y >= line.top - 8 &&
-            pointer.y <= line.bottom + 8,
-        );
+      const pointerLine =
+        pointer === null
+          ? undefined
+          : Array.from(rects).find(
+              (line) =>
+                pointer.x >= line.left - 8 &&
+                pointer.x <= line.right + 8 &&
+                pointer.y >= line.top - 8 &&
+                pointer.y <= line.bottom + 8,
+            );
+      // Below the clicked line, so a following click of a triple click still lands on text.
+      const anchor = pointer && pointerLine ? { x: pointer.x, y: pointerLine.bottom + 4 } : null;
       setSelection({
         sourceAnchor: { source: captured.source, range: captured.range, viewport },
         citation: {
@@ -169,7 +173,7 @@ export function AssistantSelectionToolbar({
         position: resolveSelectionActionPosition({
           bounds: viewportRect,
           selectionRect: rects.item(rects.length - 1) ?? rect,
-          pointer: pointerOnText ? pointer : null,
+          pointer: anchor,
           viewport: { width: window.innerWidth, height: window.innerHeight },
         }),
       });
@@ -238,10 +242,11 @@ export function AssistantSelectionToolbar({
         type="button"
         size="xs"
         variant="ghost"
+        aria-label={tooLong ? undefined : "Comment"}
         disabled={tooLong}
         onClick={() => cite("comment")}
       >
-        {tooLong ? "Shorten selection" : "Comment"}
+        {tooLong ? "Shorten selection" : <MessageSquareIcon aria-hidden="true" />}
       </Button>
       <Button
         type="button"

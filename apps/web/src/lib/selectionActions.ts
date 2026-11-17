@@ -133,7 +133,9 @@ export function observeSelectionActions({
     if (!gestureActive) return;
     gestureActive = false;
     pointer = { x: event.clientX, y: event.clientY };
-    schedule(event.detail >= 2 ? SELECTION_MULTI_CLICK_INTERVAL_MS : 0);
+    // Every click resolves at once; callers keep their action UI off the clicked line so it
+    // cannot intercept the next click of a double or triple click.
+    schedule(0);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     if (isActionTarget(event.target) && event.key !== "Escape") return;
