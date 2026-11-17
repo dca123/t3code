@@ -109,11 +109,13 @@ export function observeSelectionActions({
       cancel();
       return;
     }
-    cancelPending();
-    pointerDown = event.button === 0;
-    multiClick = event.detail >= 2;
+    // Chromium's pointerdown reports detail 0, so multi-click state comes from the time between
+    // presses; mousedown later confirms the count for mouseup.
+    multiClick = event.timeStamp - lastDownAt <= SELECTION_MULTI_CLICK_INTERVAL_MS;
     clickGap = multiClick ? event.timeStamp - lastDownAt : 0;
     lastDownAt = event.timeStamp;
+    cancelPending();
+    pointerDown = event.button === 0;
     const inside = element.contains(event.target as Node);
     gestureActive = false;
     dismissed = true;
