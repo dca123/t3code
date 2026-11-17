@@ -4,8 +4,7 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { QuoteIcon } from "lucide-react";
-import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { use, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -19,6 +18,7 @@ import {
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { selectionCommentCharacter } from "./assistantDraftCitations";
 
 export function AssistantSelectionToolbar({
   viewport,
@@ -27,16 +27,53 @@ export function AssistantSelectionToolbar({
 }: {
   viewport: HTMLElement | null;
   threadRef: ScopedThreadRef;
-  onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  onCite: (
+    citation: AssistantCitation,
+    sourceAnchor: AssistantCitationSourceAnchor,
+    action: "comment" | "preset",
+  ) => boolean;
 }) {
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
     position: SelectionActionPoint;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
-  const toolbarRef = useRef<HTMLButtonElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   const backgroundThread = use(BackgroundThreadContext);
+  const dismiss = () => {
+    actionsRef.current?.cancel();
+    setSelection(null);
+  };
+  const cite = (action: "comment" | "preset", comment?: string) => {
+    if (!selection || selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH)
+      return false;
+    const citation =
+      comment === undefined ? selection.citation : { ...selection.citation, comment };
+    if (!onCite(citation, selection.sourceAnchor, action)) return false;
+    window.getSelection()?.removeAllRanges();
+    dismiss();
+    return true;
+  };
+  const onSelectionKey = useEffectEvent((event: KeyboardEvent) => {
+    if (!selection || event.isComposing || event.defaultPrevented) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      dismiss();
+      return;
+    }
+    const target = event.target;
+    const editable =
+      target instanceof Element &&
+      target.closest(
+        'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+      ) !== null;
+    const character = selectionCommentCharacter(event, editable);
+    if (character !== null && cite("comment", character)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the toolbar DOM node and clamps its position inside the window before paint
   useLayoutEffect(() => {
@@ -146,6 +183,7 @@ export function AssistantSelectionToolbar({
     });
     actionsRef.current = actions;
     const focusActions = (event: KeyboardEvent) => {
+      onSelectionKey(event);
       const toolbar = toolbarRef.current;
       if (
         event.key !== "Tab" ||
@@ -160,10 +198,11 @@ export function AssistantSelectionToolbar({
       ) {
         return;
       }
-      if (toolbar.disabled) return;
+      const button = toolbar.querySelector<HTMLButtonElement>("button:not(:disabled)");
+      if (!button) return;
       event.preventDefault();
       event.stopPropagation();
-      toolbar.focus({ preventScroll: true });
+      button.focus({ preventScroll: true });
     };
     // Tab belongs to the foreground chat; a background timeline only follows its selection.
     if (!backgroundThread) document.addEventListener("keydown", focusActions, true);
@@ -178,28 +217,15 @@ export function AssistantSelectionToolbar({
 
   if (!selection) return null;
   const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
-  const dismiss = () => {
-    actionsRef.current?.cancel();
-    setSelection(null);
-  };
-  const cite = () => {
-    if (tooLong || !onCite(selection.citation, selection.sourceAnchor)) return false;
-    window.getSelection()?.removeAllRanges();
-    dismiss();
-    return true;
-  };
   return createPortal(
-    <Button
+    <div
       ref={toolbarRef}
-      type="button"
-      size="xs"
-      variant="glass"
-      disabled={tooLong}
-      aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
-      className="fixed z-50 max-w-[calc(100vw-1rem)]"
+      role="toolbar"
+      aria-label="Annotate selection"
+      data-assistant-selection-toolbar={backgroundThread ? undefined : "true"}
+      className="fixed z-50 flex max-w-[calc(100vw-1rem)] gap-1 rounded-md border border-border bg-popover p-1 shadow-md"
       style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
-      onClick={cite}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {
@@ -208,9 +234,36 @@ export function AssistantSelectionToolbar({
         }
       }}
     >
-      <QuoteIcon aria-hidden="true" className="size-3.5" />
-      {tooLong ? "Shorten selection" : "Cite"}
-    </Button>,
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost"
+        disabled={tooLong}
+        onClick={() => cite("comment")}
+      >
+        {tooLong ? "Shorten selection" : "Comment"}
+      </Button>
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost"
+        aria-label="Looks good"
+        disabled={tooLong}
+        onClick={() => cite("preset", "Looks good")}
+      >
+        {"\uD83D\uDC4D"}
+      </Button>
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost"
+        aria-label="Can you explain this?"
+        disabled={tooLong}
+        onClick={() => cite("preset", "Can you explain this?")}
+      >
+        {"\u2753"}
+      </Button>
+    </div>,
     document.body,
   );
 }

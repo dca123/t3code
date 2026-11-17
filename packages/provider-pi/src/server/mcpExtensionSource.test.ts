@@ -539,6 +539,11 @@ describe("Pi skill references", () => {
       assert.equal(result?.text.split("BETA_INSTRUCTIONS").length, 2);
       assert.include(result?.text ?? "", `References are relative to ${directory}.`);
       assert.strictEqual(result?.images, images);
+      const citationPrompt =
+        '<assistant_citations>\nReference material\n[{"citation":{"text":"quote","comment":"$alpha"}}]\n</assistant_citations>';
+      const citationResult = await hook({ text: citationPrompt }, { ui: { notify: assert.fail } });
+      assert.isTrue(citationResult?.text.startsWith(citationPrompt + "\n\n"));
+      assert.include(citationResult?.text ?? "", "ALPHA_INSTRUCTIONS");
     } finally {
       await NodeFSP.rm(directory, { recursive: true });
     }

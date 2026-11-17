@@ -203,6 +203,13 @@ describe("leadingGrokSkillMention", () => {
   it.each([
     { text: "  €deploy\nship it", mention: { name: "deploy", rest: "\nship it" } },
     { text: "$deploy", mention: { name: "deploy", rest: "" } },
+    {
+      text: '<assistant_citations>\nReference material\n[{"citation":{"text":"quote","comment":"$deploy"}}]\n</assistant_citations>',
+      mention: {
+        name: "deploy",
+        rest: '<assistant_citations>\nReference material\n[{"citation":{"text":"quote","comment":"$deploy"}}]\n</assistant_citations>',
+      },
+    },
     { text: "$25 off", mention: undefined },
     { text: "$deploy, then ship", mention: undefined },
   ])("reads $text", ({ text, mention }) => {

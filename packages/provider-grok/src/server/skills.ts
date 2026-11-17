@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { citationCommentSkillNames } from "@t3tools/shared/citationSkillMentions";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
@@ -21,7 +22,10 @@ export function leadingGrokSkillMention(
   text: string,
 ): { readonly name: string; readonly rest: string } | undefined {
   const match = LEADING_SKILL_MENTION.exec(text);
-  if (match?.[2] === undefined) return undefined;
+  if (match?.[2] === undefined) {
+    const name = citationCommentSkillNames(text)[0];
+    return name === undefined ? undefined : { name, rest: text };
+  }
   return { name: match[2], rest: text.slice(match[0].length) };
 }
 

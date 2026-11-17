@@ -650,8 +650,10 @@ export default function ChatView(props: ChatViewProps) {
   const citeAssistantText = (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
+    action: "comment" | "preset",
   ) => {
-    const inserted = composerRef.current?.citeAssistantText(citation, sourceAnchor) ?? false;
+    const inserted =
+      composerRef.current?.citeAssistantText(citation, sourceAnchor, action) ?? false;
     if (!inserted) {
       toastManager.add({
         type: "warning",
@@ -3447,6 +3449,7 @@ export default function ChatView(props: ChatViewProps) {
                   detailLoading={threadDetailLoading}
                   citationRequest={citationRequest}
                   citationHistory={citationHistory}
+                  citationDraftTarget={composerDraftTarget}
                   onCiteAssistantText={citeAssistantTextStable}
                   onReplyToResponse={replyToResponseStable}
                   {...(activeProject

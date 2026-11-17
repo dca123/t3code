@@ -242,6 +242,8 @@ import { toastManager } from "../ui/toast";
 import { BuildingIcon, PlayIcon, ReplyIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
+import { AssistantCitationSkillsContext } from "./AssistantCitationCommentEditor";
+import { mergeDraftCitation } from "./assistantDraftCitations";
 import { assistantCitationNavigation } from "../../lib/assistantCitationNavigation";
 import { Button } from "../ui/button";
 import { useManagedPolicy } from "../../state/managedPolicy";
@@ -305,6 +307,7 @@ export interface ChatComposerHandle {
   citeAssistantText: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
+    action: "comment" | "preset",
   ) => boolean;
   replyToResponse: (response: ResponseContextRecord) => boolean;
   openModelPicker: () => void;
@@ -2551,6 +2554,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       )
     : bannerItems;
 
+  const canEditComposerPrompt =
+    !activePendingIsResponding &&
+    (pendingUserInputs.length === 0 || !!activePendingProgress?.activeQuestion) &&
+    !projectSelectionRequired;
   const insertComposerText = (
     text: string,
     position: "cursor" | "end",
@@ -2562,9 +2569,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ): boolean => {
     if (
       text.length === 0 ||
-      activePendingIsResponding ||
-      (pendingUserInputs.length > 0 && !activePendingProgress?.activeQuestion) ||
-      projectSelectionRequired ||
+      !canEditComposerPrompt ||
       (options?.citationCommentAnchor && !composerEditorRef.current)
     ) {
       return false;
@@ -2596,6 +2601,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const insertComposerTextStable = useStableCallback(insertComposerText);
+
+  const citeAssistantTextStable = useStableCallback(
+    (
+      citation: AssistantCitation,
+      sourceAnchor: AssistantCitationSourceAnchor,
+      action: "comment" | "preset",
+    ) => {
+      if (!canEditComposerPrompt || !composerEditorRef.current) return false;
+      const existing = mergeDraftCitation(promptRef.current, citation);
+      if (existing) {
+        return applyPromptReplacementStable(existing.start, existing.end, existing.text, {
+          focusEditorAfterReplace: action !== "comment",
+          ...(action === "comment"
+            ? {
+                citationComment: {
+                  start: existing.start,
+                  sourceAnchor,
+                  insertedSpaces: null,
+                },
+              }
+            : {}),
+        });
+      }
+      return insertComposerTextStable(
+        formatAssistantCitationForComposer(citation, citation.comment),
+        "cursor",
+        {
+          ensureLeadingBoundary: true,
+          ...(action === "comment" ? { citationCommentAnchor: sourceAnchor } : {}),
+        },
+      );
+    },
+  );
 
   const insertAttachmentReferences = (
     references: ReadonlyArray<ComposerContextReference>,
@@ -3036,12 +3074,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusComposer();
         return true;
       },
-      citeAssistantText: (citation, sourceAnchor) =>
-        insertComposerTextStable(
-          formatAssistantCitationForComposer(citation, citation.comment),
-          "cursor",
-          { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
-        ),
+      citeAssistantText: citeAssistantTextStable,
       replyToResponse: (response) => {
         // An open question owns the composer, and its answer would not carry the reply.
         if (pendingUserInputs.length > 0 || projectSelectionRequired) return false;
@@ -3240,6 +3273,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       insertComposerDraftTerminalContext,
       setComposerDraftReplyTo,
       insertComposerTextStable,
+      citeAssistantTextStable,
       insertComposerTextAtEndStable,
       promptRef,
       composerImagesRef,
@@ -3591,71 +3625,75 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPreviewFileIdChange={setPreviewFileId}
                   />
                 ) : null}
-                <ComposerContextActionsContext value={composerContextActions}>
-                  <ComposerPromptEditor
-                    draftKey={composerDraftTargetKey}
-                    // Switching threads lands focus here, so the label names the thread.
-                    ariaLabel={activeThread ? `Message ${activeThread.title}` : "Message"}
-                    suggestionListId={composerSuggestionListId}
-                    activeSuggestionId={
-                      composerSuggestionListVisible && activeComposerMenuItem
-                        ? composerSuggestionOptionId(
-                            composerSuggestionListId,
-                            activeComposerMenuItem.id,
-                          )
-                        : undefined
-                    }
-                    editorRef={composerEditorRef}
-                    richTextEnabled={settings.composerRichTextEnabled}
-                    literalText={isLiteralPendingAnswer}
-                    isPathQueryActive={isPathQueryActiveStable}
-                    value={activePendingProgress ? activePendingProgress.customAnswer : prompt}
-                    cursor={composerCursor}
-                    contextRecords={composerContextRecords}
-                    buildContextClipboardFragment={buildContextClipboardFragmentStable}
-                    importContextFragment={importContextFragmentStable}
-                    skills={selectedProviderSkills}
-                    className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
-                    onChange={onPromptChangeStable}
-                    onCommandKeyDown={onComposerCommandKeyStable}
-                    onPageScrollKeyDown={onPageScrollKeyDown}
-                    onPageScrollKeyUp={onPageScrollKeyUp}
-                    onPageScrollRelease={onPageScrollRelease}
-                    onCitationSubmitAndSend={submitCitationAndSendStable}
-                    onCitationDraftSave={saveCitationDraftToPromptStable}
-                    onPaste={onComposerPasteStable}
-                    placeholder={
-                      isComposerApprovalState
-                        ? activePendingApproval?.supportsFeedback
-                          ? "Send feedback to decline this request"
-                          : "Send a message to decline and redirect the agent"
-                        : activePendingProgress
-                          ? isChoiceOnlyPendingQuestion
-                            ? "Choose an option above"
-                            : activePendingProgress.activeQuestion?.options.length === 0
-                              ? "Type your answer"
-                              : "Type your own answer, or leave this blank to use the selected option"
-                          : projectSelectionRequired
-                            ? "Choose a project above to start a thread"
-                            : showProviderUnavailable
-                              ? "Enable a provider in Settings to send a message"
-                              : (offeredPromptSuggestion ?? DEFAULT_COMPOSER_PLACEHOLDER)
-                    }
-                    placeholderSuffix={
-                      offeredPromptSuggestion !== null ? (
-                        <span className="ml-2 inline-flex align-[1px]">
-                          <Kbd variant="outline">⇥ Tab</Kbd>
-                        </span>
-                      ) : undefined
-                    }
-                    disabled={
-                      projectSelectionRequired ||
-                      isChoiceOnlyPendingQuestion ||
-                      activePendingIsResponding ||
-                      speechInput.freezesEditor
-                    }
-                  />
-                </ComposerContextActionsContext>
+                <AssistantCitationSkillsContext
+                  value={{ skills: selectedProviderSkills, provider: selectedProvider }}
+                >
+                  <ComposerContextActionsContext value={composerContextActions}>
+                    <ComposerPromptEditor
+                      draftKey={composerDraftTargetKey}
+                      // Switching threads lands focus here, so the label names the thread.
+                      ariaLabel={activeThread ? `Message ${activeThread.title}` : "Message"}
+                      suggestionListId={composerSuggestionListId}
+                      activeSuggestionId={
+                        composerSuggestionListVisible && activeComposerMenuItem
+                          ? composerSuggestionOptionId(
+                              composerSuggestionListId,
+                              activeComposerMenuItem.id,
+                            )
+                          : undefined
+                      }
+                      editorRef={composerEditorRef}
+                      richTextEnabled={settings.composerRichTextEnabled}
+                      literalText={isLiteralPendingAnswer}
+                      isPathQueryActive={isPathQueryActiveStable}
+                      value={activePendingProgress ? activePendingProgress.customAnswer : prompt}
+                      cursor={composerCursor}
+                      contextRecords={composerContextRecords}
+                      buildContextClipboardFragment={buildContextClipboardFragmentStable}
+                      importContextFragment={importContextFragmentStable}
+                      skills={selectedProviderSkills}
+                      className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
+                      onChange={onPromptChangeStable}
+                      onCommandKeyDown={onComposerCommandKeyStable}
+                      onPageScrollKeyDown={onPageScrollKeyDown}
+                      onPageScrollKeyUp={onPageScrollKeyUp}
+                      onPageScrollRelease={onPageScrollRelease}
+                      onCitationSubmitAndSend={submitCitationAndSendStable}
+                      onCitationDraftSave={saveCitationDraftToPromptStable}
+                      onPaste={onComposerPasteStable}
+                      placeholder={
+                        isComposerApprovalState
+                          ? activePendingApproval?.supportsFeedback
+                            ? "Send feedback to decline this request"
+                            : "Send a message to decline and redirect the agent"
+                          : activePendingProgress
+                            ? isChoiceOnlyPendingQuestion
+                              ? "Choose an option above"
+                              : activePendingProgress.activeQuestion?.options.length === 0
+                                ? "Type your answer"
+                                : "Type your own answer, or leave this blank to use the selected option"
+                            : projectSelectionRequired
+                              ? "Choose a project above to start a thread"
+                              : showProviderUnavailable
+                                ? "Enable a provider in Settings to send a message"
+                                : (offeredPromptSuggestion ?? DEFAULT_COMPOSER_PLACEHOLDER)
+                      }
+                      placeholderSuffix={
+                        offeredPromptSuggestion !== null ? (
+                          <span className="ml-2 inline-flex align-[1px]">
+                            <Kbd variant="outline">⇥ Tab</Kbd>
+                          </span>
+                        ) : undefined
+                      }
+                      disabled={
+                        projectSelectionRequired ||
+                        isChoiceOnlyPendingQuestion ||
+                        activePendingIsResponding ||
+                        speechInput.freezesEditor
+                      }
+                    />
+                  </ComposerContextActionsContext>
+                </AssistantCitationSkillsContext>
                 {showMobilePendingAnswerActions ? (
                   <div
                     data-chat-composer-mobile-pending-actions="true"

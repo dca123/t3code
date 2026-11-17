@@ -1,5 +1,6 @@
 // No T3 imports inside the string; resolve Pi and typebox from the user's Pi install.
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { projectedCitationComments } from "@t3tools/shared/citationSkillMentions";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 
@@ -18,6 +19,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { Type } from "typebox";
+
+const projectedCitationComments = ${projectedCitationComments.toString()};
 
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
@@ -273,7 +276,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const nativeSkill = /^\\/skill:([^ ]+)(?: |$)/.exec(event.text)?.[1];
     const seen = new Set<string>(nativeSkill === undefined ? [] : [nativeSkill]);
     const blocks: string[] = [];
-    for (const match of event.text.matchAll(/(^|\\s)\\$([^\\s]+)(?=\\s|$)/g)) {
+    const invocationText = [event.text, ...projectedCitationComments(event.text)].join("\\n");
+    for (const match of invocationText.matchAll(/(^|\\s)\\$([^\\s]+)(?=\\s|$)/g)) {
       const name = match[2];
       if (name === undefined || seen.has(name)) continue;
       const command = commands.find((candidate) => candidate.name === "skill:" + name);

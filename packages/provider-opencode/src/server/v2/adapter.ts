@@ -69,7 +69,7 @@ import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
-import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { providerSkillNames } from "@t3tools/shared/citationSkillMentions";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -757,10 +757,6 @@ const commandOf = (text: string) => {
   const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
   return match === null ? undefined : { name: match[1]!, text: match[2] ?? "" };
 };
-
-const skillMentions = (text: string) => [
-  ...new Set([...text.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => match[2] ?? [])),
-];
 
 const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["status"]) => {
   // A step whose start was missed, in a reconnect gap or as an unreadable event, ran on an unreported model.
@@ -4585,7 +4581,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* client.session.command({ sessionID, ...command }).pipe(Effect.asVoid);
         }
       }
-      const mentions = skillMentions(text);
+      const mentions = providerSkillNames(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = turnInput.resume ? "" : yield* promptText(turnInput);

@@ -1,4 +1,5 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
+import { citationCommentSkillNames } from "@t3tools/shared/citationSkillMentions";
 
 /**
  * Claude expands one skill per message only when `/name` starts the text block.
@@ -25,6 +26,11 @@ export function planClaudeSkillDispatch(
   /** Mentions before this offset, such as inline handoff history, stay plain text. */
   mentionsFrom = 0,
 ): ClaudeSkillDispatch | undefined {
+  const commentSkills = citationCommentSkillNames(prompt.slice(mentionsFrom)).filter((name) =>
+    skills.has(name),
+  );
+  if (commentSkills.length > 0)
+    prompt = `${prompt}\n\n${commentSkills.map((name) => `$${name}`).join(" ")}`;
   const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
     const skill = skills.get(name);

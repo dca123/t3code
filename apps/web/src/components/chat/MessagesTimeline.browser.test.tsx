@@ -1,4 +1,7 @@
 import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
+import { useComposerDraftStore } from "~/composerDraftStore";
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
@@ -1209,7 +1212,7 @@ const CITATION_REQUEST = {
 } satisfies NonNullable<TimelineProps["citationRequest"]>;
 
 describe("MessagesTimeline citations", () => {
-  it("offers Cite for text an agent sent with send_to_user", async () => {
+  it("offers annotation actions for text an agent sent with send_to_user", async () => {
     const text = "The draft the next question refers to";
     await using screen = await renderTimeline(
       [
@@ -1225,9 +1228,42 @@ describe("MessagesTimeline citations", () => {
     );
     await expect.element(screen.getByText(text)).toHaveStyle({ pointerEvents: "auto" });
     await userEvent.tripleClick(screen.getByText(text));
+    await expect.element(page.getByRole("button", { name: "Comment", exact: true })).toBeVisible();
     await expect
-      .element(page.getByRole("button", { name: "Cite selection in composer" }))
+      .element(page.getByRole("button", { name: "Looks good", exact: true }))
       .toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Can you explain this?", exact: true }))
+      .toBeVisible();
+    expect(shouldTypeToFocusComposer(new KeyboardEvent("keydown", { key: "x" }))).toBe(false);
+  });
+
+  it("keeps draft passages highlighted across row remounts and clears them when removed", async () => {
+    const thread = { environmentId: ENVIRONMENT_ID, threadId: ThreadId.make("draft-highlights") };
+    const citation = { ...CITATION_REQUEST.citation, ...thread };
+    const store = useComposerDraftStore.getState();
+    const props = {
+      ...baseProps(),
+      routeThreadKey: `${thread.environmentId}:${thread.threadId}`,
+      onCiteAssistantText: () => true,
+    };
+    const entries = [message("the cited answer", { role: "assistant" }, "cited")];
+    store.setPrompt(thread, serializeAssistantCitation(citation));
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries} />,
+    );
+    using _draft = { [Symbol.dispose]: () => store.setPrompt(thread, "") };
+    const highlighted = () =>
+      [...(CSS.highlights.get("t3-assistant-citation-draft") ?? [])].map((range) =>
+        range.toString(),
+      );
+    await vi.waitFor(() => expect(highlighted()).toEqual(["the cited answer"]));
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={[]} />);
+    await vi.waitFor(() => expect(highlighted()).toEqual([]));
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries} />);
+    await vi.waitFor(() => expect(highlighted()).toEqual(["the cited answer"]));
+    await act(async () => store.setPrompt(thread, ""));
+    await vi.waitFor(() => expect(highlighted()).toEqual([]));
   });
 
   it("lands a citation present at mount under StrictMode", async () => {

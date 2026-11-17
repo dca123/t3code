@@ -71,6 +71,8 @@ import {
   rememberTimelinePosition,
   resolveDisclosureRevealScrollDelta,
 } from "./timelineScrollAnchoring";
+import { AssistantDraftHighlights } from "./AssistantDraftHighlights";
+import type { ComposerThreadTarget } from "~/composerDraftStore";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { type AssistantCitationRequest } from "./AssistantCitationSource";
@@ -226,9 +228,11 @@ interface MessagesTimelineProps {
   onRespondToApproval?: TimelineRowSharedState["onRespondToApproval"];
   citationRequest?: AssistantCitationRequest | null;
   citationHistory?: CitedHistory;
+  citationDraftTarget?: ComposerThreadTarget;
   onCiteAssistantText?: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
+    action: "comment" | "preset",
   ) => boolean;
   onReplyToResponse?: TimelineRowSharedState["onReplyToResponse"];
   isWorking: boolean;
@@ -349,6 +353,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
   citationHistory = CITED_HISTORY_LOADING,
   onCiteAssistantText,
+  citationDraftTarget,
   onReplyToResponse,
   isWorking,
   runlessWorkActive = false,
@@ -1426,11 +1431,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
             data-assistant-citation-viewport="true"
           >
             {onCiteAssistantText && citationThreadRef ? (
-              <AssistantSelectionToolbar
-                viewport={timelineViewportElement}
-                threadRef={citationThreadRef}
-                onCite={onCiteAssistantText}
-              />
+              <>
+                <AssistantDraftHighlights
+                  viewport={timelineViewportElement}
+                  threadRef={citationThreadRef}
+                  draftTarget={citationDraftTarget ?? citationThreadRef}
+                  onEdit={(citation, anchor) => onCiteAssistantText(citation, anchor, "comment")}
+                />
+                <AssistantSelectionToolbar
+                  viewport={timelineViewportElement}
+                  threadRef={citationThreadRef}
+                  onCite={onCiteAssistantText}
+                />
+              </>
             ) : null}
             <LegendList<MessagesTimelineRow>
               ref={setTimelineList}

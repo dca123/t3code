@@ -7,6 +7,7 @@ import {
 import { Link, useNavigate } from "@tanstack/react-router";
 import { PencilIcon, QuoteIcon } from "lucide-react";
 import {
+  use,
   useEffect,
   useEffectEvent,
   useRef,
@@ -26,7 +27,11 @@ import { cn } from "~/lib/utils";
 import { useQuietThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
+import { renderSkillInlineMarkdownChildren } from "./SkillInlineText";
+import {
+  AssistantCitationCommentEditor,
+  AssistantCitationSkillsContext,
+} from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
@@ -73,7 +78,7 @@ function ResponseCard({
   label: string;
   title?: string | undefined;
   preview: ReactNode;
-  comment?: string | undefined;
+  comment?: ReactNode;
   leading: boolean;
   trailing: boolean;
 }) {
@@ -104,7 +109,7 @@ function ResponseCard({
         </span>
       </Link>
       {comment ? (
-        <span className="mt-1.5 block whitespace-pre-wrap" dir={textDirection(comment)}>
+        <span className="mt-1.5 block whitespace-pre-wrap" dir="auto">
           {comment}
         </span>
       ) : null}
@@ -117,8 +122,10 @@ export function AssistantCitationEmbed({
   citation,
   leading,
   trailing,
+  skills,
 }: {
   citation: AssistantCitation;
+  skills: ReadonlyArray<import("@t3tools/contracts").ServerProviderSkill>;
   leading: boolean;
   trailing: boolean;
 }) {
@@ -130,7 +137,16 @@ export function AssistantCitationEmbed({
       copyMarkdown={serializeAssistantCitation(citation)}
       cardCopyMarkdown={serializeAssistantCitation(quoted)}
       label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
-      comment={comment}
+      comment={
+        comment
+          ? renderSkillInlineMarkdownChildren(
+              comment,
+              skills,
+              { environmentId: citation.environmentId, threadId: citation.threadId },
+              citation.environmentId,
+            )
+          : undefined
+      }
       leading={leading}
       trailing={trailing}
       preview={
@@ -186,12 +202,14 @@ export function AssistantCitationChip({
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
     onOpenChange: (open: boolean) => void;
     onCancel?: () => void;
+    onDelete?: () => void;
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
     onDraftChange?: (comment: string) => void;
     onRestoreFocus?: () => void;
   };
 }) {
+  const catalog = use(AssistantCitationSkillsContext);
   const sourceLinkProps = useCitationSourceLinkProps(citation);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
@@ -259,9 +277,11 @@ export function AssistantCitationChip({
       aria-label={`View cited assistant text: ${label}`}
     >
       <QuoteIcon aria-hidden="true" />
-      <ContextChipLabel className="max-w-[16em]" dir={textDirection(label)}>
-        {label}
-      </ContextChipLabel>
+      {!(citation.comment && catalog) ? (
+        <ContextChipLabel className="max-w-[16em]" dir={textDirection(label)}>
+          {label}
+        </ContextChipLabel>
+      ) : null}
     </Link>
   );
   return (
@@ -272,6 +292,16 @@ export function AssistantCitationChip({
       data-markdown-copy={serializeAssistantCitation(citation)}
     >
       {composerSourceLink}
+      {citation.comment && catalog ? (
+        <span className="max-w-48 truncate">
+          {renderSkillInlineMarkdownChildren(
+            citation.comment,
+            catalog.skills,
+            { environmentId: citation.environmentId, threadId: citation.threadId },
+            citation.environmentId,
+          )}
+        </span>
+      ) : null}
       {commentEditor ? (
         <Popover
           open={commentEditor.open && !voiceSetupOpen}
@@ -332,6 +362,7 @@ export function AssistantCitationChip({
                 key={serializeAssistantCitation(citation)}
                 citation={citation}
                 inputRef={commentInputRef}
+                {...(commentEditor.onDelete ? { onDelete: commentEditor.onDelete } : {})}
                 onVoiceSetupOpenChange={setVoiceSetupOpen}
                 onDraftChange={(comment) => {
                   draftCommentRef.current = comment;

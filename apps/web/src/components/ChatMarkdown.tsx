@@ -1149,6 +1149,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   a: function MarkdownAnchor({ node, href, children, title: _title, ...props }) {
     const {
+      skills,
       canOperateHost,
       canOperatePreview,
       cwd,
@@ -1176,7 +1177,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const leading = before !== undefined && CITATION_LEADS_BLOCK.test(text.slice(0, before));
     const trailing = after !== undefined && CITATION_ENDS_BLOCK.test(text.slice(after));
     if (citation) {
-      return <AssistantCitationEmbed citation={citation} leading={leading} trailing={trailing} />;
+      return (
+        <AssistantCitationEmbed
+          citation={citation}
+          skills={skills}
+          leading={leading}
+          trailing={trailing}
+        />
+      );
     }
     const threadLink = href ? parseThreadLinkHref(href) : null;
     if (threadLink) {

@@ -129,8 +129,13 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose
-**Cite in composer**. You can add a comment about the quote and write instructions
-around it.
+**Comment**, or start typing to open a comment. The thumbs-up and question buttons
+add "Looks good" and "Can you explain this?" with one click. Use `$` in a comment
+to choose a skill from the current provider.
+
+Quoted passages stay highlighted while their citations are in the draft. Click a
+highlight to edit its comment or delete the citation. Annotating the same passage
+again updates its comment. Sending or removing the citation clears its highlight.
 
 Select the quote in a draft or sent message to return to its source. If the source
 is unavailable or has changed, the saved quote remains readable.

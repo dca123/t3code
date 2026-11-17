@@ -28,6 +28,11 @@ import {
 import { slashCommandItemsForPromptPosition } from "./components/chat/composerSlashCommandSearch";
 import { carryDisplacedCustomAnswerIntoPrompt } from "./pendingUserInput";
 import { formatTerminalContextReference } from "./lib/terminalContext";
+import {
+  draftCitationsForThread,
+  mergeDraftCitation,
+  selectionCommentCharacter,
+} from "./components/chat/assistantDraftCitations";
 
 const terminalReference = formatTerminalContextReference({
   id: "ctx-1",
@@ -48,6 +53,57 @@ const citation: AssistantCitation = {
   suffix: " 後",
 };
 const citationSource = serializeAssistantCitation(citation).replaceAll("+", "%20");
+
+describe("draft annotations", () => {
+  it("matches an existing selection independently of its comment and limits highlights to this thread", () => {
+    const saved = { ...citation, comment: "Looks good" };
+    const foreign = { ...citation, threadId: ThreadId.make("other-thread") };
+    const prompt = `${serializeAssistantCitation(saved)} ${serializeAssistantCitation(foreign)}`;
+    const merged = mergeDraftCitation(prompt, { ...citation, comment: "Can you explain this?" });
+    if (!merged) throw new Error("The same passage must merge into its existing citation");
+    const updated = `${prompt.slice(0, merged.start)}${merged.text}${prompt.slice(merged.end)}`;
+    expect(collectAssistantCitations(updated).map(({ citation }) => citation)).toEqual([
+      { ...citation, comment: "Can you explain this?" },
+      foreign,
+    ]);
+    expect(mergeDraftCitation(prompt, citation)?.text).toBe(serializeAssistantCitation(saved));
+    expect(mergeDraftCitation(prompt, { ...citation, end: citation.end + 1 })).toBeNull();
+    expect(draftCitationsForThread(prompt, citation)).toEqual([saved]);
+    expect(draftCitationsForThread("", citation)).toEqual([]);
+  });
+
+  it.each([
+    { key: "a", expected: "a" },
+    { key: " ", expected: " " },
+    { key: "A", expected: "A" },
+    { key: "Tab", expected: null },
+    { key: "Enter", expected: null },
+    { key: "Escape", expected: null },
+    { key: "a", ctrlKey: true, expected: null },
+    { key: "a", metaKey: true, expected: null },
+    { key: "a", altKey: true, expected: null },
+    { key: "a", isComposing: true, expected: null },
+    { key: "a", defaultPrevented: true, expected: null },
+    { key: "a", editable: true, expected: null },
+  ])(
+    "starts a comment only for unclaimed printable input: %j",
+    ({ expected, editable = false, ...event }) => {
+      expect(
+        selectionCommentCharacter(
+          {
+            ctrlKey: false,
+            metaKey: false,
+            altKey: false,
+            isComposing: false,
+            defaultPrevented: false,
+            ...event,
+          },
+          editable,
+        ),
+      ).toBe(expected);
+    },
+  );
+});
 
 describe("isPathSuggestionCurrent", () => {
   const searchedTarget = {

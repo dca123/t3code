@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
+import {
+  expandAssistantCitationsForProvider,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
+import { EnvironmentId, ThreadId, MessageId } from "@t3tools/contracts";
 
 import { planClaudeSkillDispatch, type ClaudeSkillTarget } from "./ClaudeSkillDispatch.ts";
 
@@ -21,6 +26,25 @@ describe("planClaudeSkillDispatch", () => {
       leadingText: "ok, now /implement all the tickets",
       commandText: "/implement all the tickets",
     });
+    const prompt = expandAssistantCitationsForProvider(
+      serializeAssistantCitation({
+        version: 1,
+        environmentId: EnvironmentId.make("env"),
+        threadId: ThreadId.make("thread"),
+        messageId: MessageId.make("message"),
+        text: "quoted",
+        start: 0,
+        end: 6,
+        prefix: "",
+        suffix: "",
+        comment: "$review",
+      }),
+    );
+    expect(planClaudeSkillDispatch(prompt, SKILLS)).toEqual({
+      leadingText: `${prompt}\n\n/review`,
+      commandText: "/review",
+    });
+    expect(planClaudeSkillDispatch(prompt, SKILLS, prompt.length)).toBeUndefined();
   });
 
   it("keeps a mention that opens the prompt as a single command block", () => {

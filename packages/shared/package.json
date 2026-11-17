@@ -291,6 +291,10 @@
       "types": "./src/composerInlineTokens.ts",
       "import": "./src/composerInlineTokens.ts"
     },
+    "./citationSkillMentions": {
+      "types": "./src/citationSkillMentions.ts",
+      "import": "./src/citationSkillMentions.ts"
+    },
     "./assistantCitations": {
       "types": "./src/assistantCitations.ts",
       "import": "./src/assistantCitations.ts"

@@ -3,6 +3,7 @@ import {
   type AssistantCitation,
   EnvironmentId,
   MessageId,
+  ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
 import { useState, type ReactNode } from "react";
@@ -25,6 +26,10 @@ vi.mock(import("@tanstack/react-router"), async (importOriginal) => ({
 }));
 
 import { AssistantCitationChip } from "./AssistantCitationChip";
+import {
+  AssistantCitationCommentEditor,
+  AssistantCitationSkillsContext,
+} from "./AssistantCitationCommentEditor";
 
 const citation = {
   version: 1 as const,
@@ -70,6 +75,30 @@ function mount(
 
 const textarea = () =>
   document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment on selected text"]');
+
+it("completes skills with dollar, never slash, and saves the selected skill as comment text", async () => {
+  const onSubmit = vi.fn(() => true);
+  await using screen = await render(
+    <AssistantCitationSkillsContext
+      value={{
+        provider: ProviderDriverKind.make("pi"),
+        skills: [{ name: "review", path: "/skills/review/SKILL.md", enabled: true }],
+      }}
+    >
+      <AssistantCitationCommentEditor citation={citation} onSubmit={onSubmit} onCancel={() => {}} />
+    </AssistantCitationSkillsContext>,
+  );
+  const input = screen.getByRole("textbox", { name: "Comment on selected text" });
+  await userEvent.fill(input, "/rev");
+  await expect.element(screen.getByRole("listbox")).not.toBeInTheDocument();
+  await userEvent.fill(input, "$rev");
+  await expect.element(screen.getByRole("listbox")).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(input).toHaveValue("$review ");
+  expect(onSubmit).not.toHaveBeenCalled();
+  await userEvent.keyboard("{Enter}");
+  expect(onSubmit).toHaveBeenCalledWith("$review ");
+});
 
 async function typeComment(value: string) {
   const input = textarea()!;

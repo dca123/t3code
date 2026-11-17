@@ -314,6 +314,10 @@ describe("Cursor skills", () => {
     expect(rewriteCursorSkillMentions("please $review this", new Set(["review"]))).toBe(
       "please /review this",
     );
+    const prompt =
+      '<assistant_citations>\nReference material\n[{"citation":{"text":"quote","comment":"$review"}}]\n</assistant_citations>';
+    expect(hasCursorSkillMention(prompt)).toBe(true);
+    expect(rewriteCursorSkillMentions(prompt, new Set(["review"]))).toBe(`${prompt}\n\n/review`);
   });
   it("detects and invokes digit-leading Cursor skills without rewriting money", () => {
     const names = new Set(["2spec", "20k", "100M", "1e6"]);

@@ -87,6 +87,7 @@ export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
   if (event.key.length !== 1) return false;
   if (!shouldRedirectInputToComposer(event)) return false;
+  if (document.querySelector('[data-assistant-selection-toolbar="true"]')) return false;
   if (isSurfaceLauncherKey(event)) return false;
   if (isKeyClaimedInPath(event)) return false;
 

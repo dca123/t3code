@@ -209,7 +209,7 @@ export type ComposerCitationCommentRequest = {
   value: string;
   citationStart: number;
   sourceAnchor: AssistantCitationSourceAnchor;
-  insertedSpaces: CitationInsertedSpaces;
+  insertedSpaces: CitationInsertedSpaces | null;
 };
 
 type CitationInsertedSpaces = { before: boolean; after: boolean };
@@ -476,15 +476,14 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
 
   const removeOnCancel = commentTarget?.removeOnCancel;
   const onRemove = () => {
-    if (!removeOnCancel) return;
     const pos = nodePos();
     if (pos === null) return;
     const { doc } = editor.state;
     const current = doc.nodeAt(pos);
     if (!current) return;
     const end = pos + current.nodeSize;
-    const from = removeOnCancel.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
-    const to = removeOnCancel.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
+    const from = removeOnCancel?.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
+    const to = removeOnCancel?.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
     // A read-only composer (dictation) can still receive a new citation, so Cancel must undo it.
     const chain = editor.chain();
     (editor.isEditable ? chain.focus() : chain).deleteRange({ from, to }).run();
@@ -543,6 +542,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
             commentContext.onOpenChange(citeKey, open);
           },
           ...(removeOnCancel ? { onCancel: onRemove } : {}),
+          onDelete: onRemove,
           onSave: onSaveComment,
           onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
@@ -1652,7 +1652,9 @@ function ComposerPromptEditorTiptapInner(
           setOpenCitation({
             key: citeKey,
             sourceAnchor: pendingCitation.sourceAnchor,
-            removeOnCancel: pendingCitation.insertedSpaces,
+            ...(pendingCitation.insertedSpaces
+              ? { removeOnCancel: pendingCitation.insertedSpaces }
+              : {}),
           });
         }
       }
@@ -1773,7 +1775,7 @@ function ComposerPromptEditorTiptapInner(
           setOpenCitation({
             key: citeKey,
             sourceAnchor: request.sourceAnchor,
-            removeOnCancel: request.insertedSpaces,
+            ...(request.insertedSpaces ? { removeOnCancel: request.insertedSpaces } : {}),
           });
         }
       },

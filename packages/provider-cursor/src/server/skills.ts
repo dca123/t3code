@@ -1,6 +1,7 @@
 // Scan skills without opening an ACP session and starting its MCP servers.
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
+import { citationCommentSkillNames } from "@t3tools/shared/citationSkillMentions";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -295,13 +296,16 @@ export const probeCursorSkills = Effect.fn("probeCursorSkills")(function* (
 
 /** Cursor invokes Agent Skills with `/name`; T3 composers insert `$name`. */
 export function hasCursorSkillMention(prompt: string): boolean {
-  return HAS_SKILL_MENTION_PATTERN.test(prompt);
+  return HAS_SKILL_MENTION_PATTERN.test(prompt) || citationCommentSkillNames(prompt).length > 0;
 }
 
 export function rewriteCursorSkillMentions(
   prompt: string,
   skillNames: ReadonlySet<string>,
 ): string {
+  const commentSkills = citationCommentSkillNames(prompt).filter((name) => skillNames.has(name));
+  if (commentSkills.length > 0)
+    prompt = `${prompt}\n\n${commentSkills.map((name) => `/${name}`).join(" ")}`;
   return prompt.replace(SKILL_MENTION_PATTERN, (match, prefix: string, name: string) =>
     skillNames.has(name) ? `${prefix}/${name}` : match,
   );

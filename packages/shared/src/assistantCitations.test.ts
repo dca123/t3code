@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { citationCommentSkillNames, providerSkillNames } from "./citationSkillMentions.ts";
 import {
   ASSISTANT_CITATION_CONTEXT_LENGTH,
   ASSISTANT_CITATION_MAX_COMMENT_LENGTH,
@@ -32,6 +33,31 @@ const citation: AssistantCitation = {
   prefix: "Before the quote. ",
   suffix: " After the quote.",
 };
+
+it("extracts skill invocations from user comments, not the saved assistant quote", () => {
+  const source = serializeAssistantCitation({
+    ...citation,
+    text: "Use $not-requested",
+    comment: '$review\nthen "please" $implement and $review',
+  });
+  expect(citationCommentSkillNames(source)).toEqual(["review", "implement"]);
+  expect(citationCommentSkillNames(expandAssistantCitationsForProvider(source))).toEqual([
+    "review",
+    "implement",
+  ]);
+  expect(providerSkillNames(expandAssistantCitationsForProvider(`$outside ${source}`))).toEqual([
+    "outside",
+    "review",
+    "implement",
+  ]);
+  expect(
+    citationCommentSkillNames(
+      expandAssistantCitationsForProvider(
+        serializeAssistantCitation({ ...citation, text: "$not-requested" }),
+      ),
+    ),
+  ).toEqual([]);
+});
 
 const legacyHref =
   "t3-citation://v1/a/b/c?text=A+quote+%26+a+newline.%0A&start=0&end=21&prefix=&suffix=+Next.";
