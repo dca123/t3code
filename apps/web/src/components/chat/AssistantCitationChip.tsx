@@ -306,6 +306,11 @@ export function AssistantCitationChip({
         <Popover
           open={commentEditor.open && !voiceSetupOpen}
           onOpenChange={(open, eventDetails) => {
+            // onCancel exists only for a just-added citation; Escape undoes it like the Cancel button.
+            if (!open && eventDetails.reason === "escape-key" && commentEditor.onCancel) {
+              commentEditor.onCancel();
+              return;
+            }
             if (!open && !settleDraftOnClose(eventDetails.reason)) {
               eventDetails.cancel();
               return;
