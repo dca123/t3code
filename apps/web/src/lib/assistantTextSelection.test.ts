@@ -252,8 +252,30 @@ describe("captureAssistantTextSelection", () => {
         prefix: "Earlier answer. ",
       }),
     );
-    expect(capture(source, nativeSelection([quote, 0], [timestampText, 1]))).toBeNull();
   });
+
+  it.each([false, true])(
+    "cites the response when a drag from it overshoots into non-response text, backwards=%s",
+    (backwards) => {
+      const quote = textNode("The cited answer.");
+      const source = assistantSource(new SelectionNode("P").append(quote));
+      const outside = textNode("7:07 PM");
+      const viewport = new SelectionNode("MAIN").append(
+        ...(backwards
+          ? [new SelectionNode("P").append(outside), source]
+          : [source, new SelectionNode("P").append(outside)]),
+      );
+      const selection = backwards
+        ? nativeSelection([outside, 1], [quote, 5], true)
+        : nativeSelection([quote, 4], [outside, 1]);
+
+      expect(capture(viewport, selection)?.selector).toEqual(
+        backwards
+          ? selector("The c", { suffix: "ited answer." })
+          : selector("cited answer.", { start: 4, end: quote.length, prefix: "The " }),
+      );
+    },
+  );
 
   it("captures a triple-clicked response that ends before a tool row and the next response", () => {
     const quote = textNode("Recording your answers in the session note:");

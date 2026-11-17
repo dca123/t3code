@@ -209,12 +209,29 @@ function selectedTextBoundary(range: Range, node: Node, last: boolean): Text | n
   return null;
 }
 
+function sourceOf(node: Node, viewport: HTMLElement): HTMLElement | null {
+  const element = node.nodeType === 1 ? (node as Element) : node.parentElement;
+  const source = element?.closest<HTMLElement>("[data-assistant-citation-source]") ?? null;
+  return source && viewport.contains(source) ? source : null;
+}
+
 export function captureAssistantTextSelection(
   viewport: HTMLElement,
   selection: Selection | null,
 ): { source: HTMLElement; selector: AssistantTextSelector; range: Range } | null {
   if (selection === null || selection.isCollapsed || selection.rangeCount !== 1) return null;
   const range = selection.getRangeAt(0).cloneRange();
+  // A drag from a response that overshoots into non-response text (a timestamp, a gap above the
+  // heading) cites the response; overshooting into another response still fails below.
+  const { anchorNode, focusNode, focusOffset } = selection;
+  const origin = anchorNode ? sourceOf(anchorNode, viewport) : null;
+  if (origin && focusNode && sourceOf(focusNode, viewport) === null) {
+    if (range.startContainer === focusNode && range.startOffset === focusOffset) {
+      range.setStart(origin, 0);
+    } else {
+      range.setEnd(origin, origin.childNodes.length);
+    }
+  }
   const first = selectedTextBoundary(range, range.commonAncestorContainer, false);
   const last = selectedTextBoundary(range, range.commonAncestorContainer, true);
   if (first === null || last === null) return null;

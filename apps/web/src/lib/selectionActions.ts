@@ -59,6 +59,7 @@ export function observeSelectionActions({
   const document = element.ownerDocument;
   const view = document.defaultView!;
   let pointerDown = false;
+  let multiClick = false;
   let gestureActive = false;
   let dismissed = false;
   let restorable = false;
@@ -108,13 +109,16 @@ export function observeSelectionActions({
     }
     cancelPending();
     pointerDown = event.button === 0;
+    multiClick = event.detail >= 2;
     const inside = element.contains(event.target as Node);
     gestureActive = false;
     dismissed = true;
     restorable = false;
     pointer = null;
-    if (inside) onDismiss("interaction");
-    else if (getActionElement?.()) onDismiss("cancel");
+    // Later clicks of a double or triple click keep the actions up until they re-resolve, so
+    // they move instead of blinking out and back.
+    if (inside && !multiClick) onDismiss("interaction");
+    else if (!inside && getActionElement?.()) onDismiss("cancel");
   };
   const onSelectionStart = (event: PointerEvent) => {
     if (!event.isPrimary) return;
@@ -133,8 +137,7 @@ export function observeSelectionActions({
     if (!gestureActive) return;
     gestureActive = false;
     pointer = { x: event.clientX, y: event.clientY };
-    // Every click resolves at once; callers keep their action UI off the clicked line so it
-    // cannot intercept the next click of a double or triple click.
+    // Callers keep their actions off the clicked line so a following click still lands on text.
     schedule(0);
   };
   const onKeyDown = (event: KeyboardEvent) => {
@@ -183,7 +186,7 @@ export function observeSelectionActions({
     selectionChanged() {
       if (isActionTarget(document.activeElement)) return;
       if (pointerDown || gestureActive) {
-        onDismiss("cancel");
+        if (!multiClick) onDismiss("cancel");
       } else if (!dismissed && timer === null && frame === null) {
         schedule(0);
       }
