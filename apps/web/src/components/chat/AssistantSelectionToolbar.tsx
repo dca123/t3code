@@ -89,7 +89,7 @@ export function AssistantSelectionToolbar({
   useEffect(() => {
     if (!viewport) return;
     const clear = () => setSelection(null);
-    const update = (pointer: SelectionActionPoint | null) => {
+    const update = (pointer: SelectionActionPoint | null, extending: boolean) => {
       const nativeSelection = window.getSelection();
       const captured = captureAssistantTextSelection(viewport, nativeSelection);
       const messageId = captured?.source.dataset.assistantCitationSource;
@@ -160,9 +160,15 @@ export function AssistantSelectionToolbar({
                 pointer.y >= line.top - 8 &&
                 pointer.y <= line.bottom + 8,
             );
-      // Below the clicked line, so a following click of a triple click still lands on text.
+      // Below the clicked line, so the third click of a triple click still lands on text.
       const anchor = pointer && pointerLine ? { x: pointer.x, y: pointerLine.bottom + 4 } : null;
-      setSelection({
+      const position = resolveSelectionActionPosition({
+        bounds: viewportRect,
+        selectionRect: rects.item(rects.length - 1) ?? rect,
+        pointer: anchor,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      });
+      setSelection((current) => ({
         sourceAnchor: { source: captured.source, range: captured.range, viewport },
         citation: {
           version: 1,
@@ -170,13 +176,9 @@ export function AssistantSelectionToolbar({
           messageId: MessageId.make(messageId),
           ...captured.selector,
         },
-        position: resolveSelectionActionPosition({
-          bounds: viewportRect,
-          selectionRect: rects.item(rects.length - 1) ?? rect,
-          pointer: anchor,
-          viewport: { width: window.innerWidth, height: window.innerHeight },
-        }),
-      });
+        // A triple click grows the shown selection; the actions stay where the user aimed.
+        position: extending && current ? current.position : position,
+      }));
     };
     const actions = observeSelectionActions({
       element: viewport,

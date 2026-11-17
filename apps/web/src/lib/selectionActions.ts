@@ -53,14 +53,14 @@ export function observeSelectionActions({
   element: HTMLElement;
   getActionElement?: () => HTMLElement | null;
   restoreAfterScroll?: boolean;
-  onSelection: (pointer: SelectionActionPoint | null) => void;
+  /** `extending` is a further click of a double or triple click growing the shown selection. */
+  onSelection: (pointer: SelectionActionPoint | null, extending: boolean) => void;
   onDismiss: (reason: "interaction" | "cancel") => void;
 }) {
   const document = element.ownerDocument;
   const view = document.defaultView!;
   let pointerDown = false;
   let multiClick = false;
-  let lastDownAt = 0;
   let gestureActive = false;
   let dismissed = false;
   let restorable = false;
@@ -98,7 +98,7 @@ export function observeSelectionActions({
       timer = null;
       frame = view.requestAnimationFrame(() => {
         frame = null;
-        onSelection(pointer);
+        onSelection(pointer, multiClick);
       });
     }, delay);
   };
@@ -108,10 +108,6 @@ export function observeSelectionActions({
       cancel();
       return;
     }
-    // Chromium's pointerdown reports detail 0, so multi-click state comes from the time between
-    // presses; mousedown later confirms the count for mouseup.
-    multiClick = event.timeStamp - lastDownAt <= SELECTION_MULTI_CLICK_INTERVAL_MS;
-    lastDownAt = event.timeStamp;
     cancelPending();
     pointerDown = event.button === 0;
     const inside = element.contains(event.target as Node);
@@ -119,10 +115,14 @@ export function observeSelectionActions({
     dismissed = true;
     restorable = false;
     pointer = null;
-    // Later clicks of a double or triple click keep the actions up until they re-resolve, so
-    // they move instead of blinking out and back.
-    if (inside && !multiClick) onDismiss("interaction");
-    else if (!inside && getActionElement?.()) onDismiss("cancel");
+    if (!inside && getActionElement?.()) onDismiss("cancel");
+  };
+  // Chromium's pointerdown has no click count, so mousedown decides whether this press starts
+  // a new selection or extends the shown one; an extending click keeps the actions open.
+  const onMouseDown = (event: MouseEvent) => {
+    if (event.button !== 0 || isActionTarget(event.target)) return;
+    multiClick = event.detail >= 2;
+    if (!multiClick && element.contains(event.target as Node)) onDismiss("interaction");
   };
   const onSelectionStart = (event: PointerEvent) => {
     if (!event.isPrimary) return;
@@ -141,8 +141,6 @@ export function observeSelectionActions({
     if (!gestureActive) return;
     gestureActive = false;
     pointer = { x: event.clientX, y: event.clientY };
-    // Callers keep their actions off the clicked line, so a third click lands on text and the
-    // actions stay put while the selection grows.
     schedule(0);
   };
   const onKeyDown = (event: KeyboardEvent) => {
@@ -172,6 +170,7 @@ export function observeSelectionActions({
   };
 
   document.addEventListener("pointerdown", onPointerDown, true);
+  document.addEventListener("mousedown", onMouseDown, true);
   element.addEventListener("pointerdown", onSelectionStart);
   view.addEventListener("pointerup", onPointerUp);
   view.addEventListener("mouseup", onMouseUp);
@@ -199,6 +198,7 @@ export function observeSelectionActions({
     dispose() {
       cancel();
       document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("mousedown", onMouseDown, true);
       element.removeEventListener("pointerdown", onSelectionStart);
       view.removeEventListener("pointerup", onPointerUp);
       view.removeEventListener("mouseup", onMouseUp);
