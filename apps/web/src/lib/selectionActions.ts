@@ -60,6 +60,8 @@ export function observeSelectionActions({
   const view = document.defaultView!;
   let pointerDown = false;
   let multiClick = false;
+  let lastDownAt = 0;
+  let clickGap = 0;
   let gestureActive = false;
   let dismissed = false;
   let restorable = false;
@@ -110,6 +112,8 @@ export function observeSelectionActions({
     cancelPending();
     pointerDown = event.button === 0;
     multiClick = event.detail >= 2;
+    clickGap = multiClick ? event.timeStamp - lastDownAt : 0;
+    lastDownAt = event.timeStamp;
     const inside = element.contains(event.target as Node);
     gestureActive = false;
     dismissed = true;
@@ -137,8 +141,8 @@ export function observeSelectionActions({
     if (!gestureActive) return;
     gestureActive = false;
     pointer = { x: event.clientX, y: event.clientY };
-    // Callers keep their actions off the clicked line so a following click still lands on text.
-    schedule(0);
+    // Like macOS, a double click waits about one more of the user's own click gaps for a third.
+    schedule(event.detail === 2 ? Math.min(clickGap * 1.5, SELECTION_MULTI_CLICK_INTERVAL_MS) : 0);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     if (isActionTarget(event.target) && event.key !== "Escape") return;
