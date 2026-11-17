@@ -61,7 +61,6 @@ export function observeSelectionActions({
   let pointerDown = false;
   let multiClick = false;
   let lastDownAt = 0;
-  let clickGap = 0;
   let gestureActive = false;
   let dismissed = false;
   let restorable = false;
@@ -112,7 +111,6 @@ export function observeSelectionActions({
     // Chromium's pointerdown reports detail 0, so multi-click state comes from the time between
     // presses; mousedown later confirms the count for mouseup.
     multiClick = event.timeStamp - lastDownAt <= SELECTION_MULTI_CLICK_INTERVAL_MS;
-    clickGap = multiClick ? event.timeStamp - lastDownAt : 0;
     lastDownAt = event.timeStamp;
     cancelPending();
     pointerDown = event.button === 0;
@@ -143,8 +141,9 @@ export function observeSelectionActions({
     if (!gestureActive) return;
     gestureActive = false;
     pointer = { x: event.clientX, y: event.clientY };
-    // Like macOS, a double click waits about one more of the user's own click gaps for a third.
-    schedule(event.detail === 2 ? Math.min(clickGap * 1.5, SELECTION_MULTI_CLICK_INTERVAL_MS) : 0);
+    // Callers keep their actions off the clicked line, so a third click lands on text and the
+    // actions stay put while the selection grows.
+    schedule(0);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     if (isActionTarget(event.target) && event.key !== "Escape") return;
