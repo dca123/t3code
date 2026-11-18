@@ -74,7 +74,7 @@ export function setShownThread(threadRef: ScopedThreadRef | null): void {
   if (wasLit !== isShownThreadLit()) emit();
 }
 
-function isShownThreadLit(): boolean {
+export function isShownThreadLit(): boolean {
   return shownThreadKey !== null && readLit().has(shownThreadKey);
 }
 

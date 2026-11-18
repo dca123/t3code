@@ -1780,6 +1780,22 @@ export function parseThemeHalves(raw: string | null): ThemeHalves | null {
   }
 }
 
+/** One appearance's palette variables, for a subtree that keeps it while the root shows the other. */
+export function themePaletteVariables(
+  theme: ThemePreference,
+  appearance: ThemeAppearance,
+): Readonly<Record<string, string>> {
+  const palette = getThemeDefinition(theme);
+  const colors = palette ? getThemeColorsForMode(palette, appearance) : null;
+  if (!colors) return {};
+  return Object.fromEntries(
+    (Object.entries(colors) as Array<[ThemeColorRole, string]>).map(([role, value]) => [
+      APP_THEME_VARIABLES[role],
+      value,
+    ]),
+  );
+}
+
 export function resolveThemeHalf(
   theme: ThemePreference,
   halves: ThemeHalves | null,

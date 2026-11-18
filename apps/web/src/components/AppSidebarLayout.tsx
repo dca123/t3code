@@ -65,6 +65,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { resolveThreadRouteRef } from "../threadRoutes";
+import { useLitThreadSidebar } from "../hooks/useLitThreadSidebar";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -452,6 +453,7 @@ export function AppSidebarLayout({
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
       : {}
   ) as CSSProperties;
+  const litThreadSidebar = useLitThreadSidebar();
   const sidebarProviderStyle = {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
@@ -473,6 +475,7 @@ export function AppSidebarLayout({
               side="left"
               collapsible="offcanvas"
               data-app-sidebar=""
+              {...(litThreadSidebar ? { className: litThreadSidebar.className } : {})}
               {...sidebarArea}
               role="navigation"
               aria-label="Threads"
@@ -485,7 +488,7 @@ export function AppSidebarLayout({
                 storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
                 onResize: setSidebarWidth,
               }}
-              style={windowControlsInsetStyle}
+              style={{ ...windowControlsInsetStyle, ...litThreadSidebar?.style }}
             >
               <ThreadSidebar routeReveal={sidebarRouteReveal} />
               <SidebarRail onDoubleClick={resetSidebarWidth} />

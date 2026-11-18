@@ -36,6 +36,8 @@ type Theme = ThemePreference;
 type ThemeSnapshot = {
   theme: Theme;
   resolvedTheme: ThemeAppearance;
+  /** The appearance without a lit thread's override. */
+  savedResolvedTheme: ThemeAppearance;
   systemDark: boolean;
   followSystem: boolean;
   appearanceMode: ThemePreferenceMode;
@@ -49,6 +51,7 @@ const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   theme: "system",
   resolvedTheme: "light",
+  savedResolvedTheme: "light",
   systemDark: false,
   followSystem: true,
   appearanceMode: "system",
@@ -133,7 +136,7 @@ let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let snapshotStale = true;
 let lastDesktopTheme: "light" | "dark" | "system" | null = null;
-let lastAppliedTheme: Omit<ThemeSnapshot, "resolvedTheme"> | null = null;
+let lastAppliedTheme: Omit<ThemeSnapshot, "resolvedTheme" | "savedResolvedTheme"> | null = null;
 let themeStorageReadFailure: ThemeStorageError | null = null;
 
 function emitChange() {
@@ -414,8 +417,15 @@ function getSnapshot(): ThemeSnapshot {
   const appearanceMode = readAppearanceModePreference(theme);
   const followSystem = appearanceMode === "system";
   const shownMode = resolveShownAppearanceMode(appearanceMode);
-  const systemDark = shownMode === "system" ? getSystemDark() : false;
+  const systemDark = shownMode === "system" || followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
+  const savedResolvedTheme = resolveThemeAppearance(
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+  );
 
   // The saved mode drives settings; what renders follows a lit thread too.
   const resolvedTheme = resolveThemeAppearance(
@@ -429,6 +439,7 @@ function getSnapshot(): ThemeSnapshot {
     lastSnapshot &&
     lastSnapshot.theme === theme &&
     lastSnapshot.resolvedTheme === resolvedTheme &&
+    lastSnapshot.savedResolvedTheme === savedResolvedTheme &&
     lastSnapshot.systemDark === systemDark &&
     lastSnapshot.followSystem === followSystem &&
     lastSnapshot.appearanceMode === appearanceMode &&
@@ -437,7 +448,15 @@ function getSnapshot(): ThemeSnapshot {
     return lastSnapshot;
   }
 
-  lastSnapshot = { theme, resolvedTheme, systemDark, followSystem, appearanceMode, themeHalves };
+  lastSnapshot = {
+    theme,
+    resolvedTheme,
+    savedResolvedTheme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+  };
   return lastSnapshot;
 }
 
@@ -681,6 +700,7 @@ export function useTheme() {
     followSystem: snapshot.followSystem,
     appearanceMode: snapshot.appearanceMode,
     resolvedTheme,
+    savedResolvedTheme: snapshot.savedResolvedTheme,
     themeHalves: snapshot.themeHalves,
   } as const;
 }

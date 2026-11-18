@@ -12,8 +12,8 @@ the theme. **Cmd+Option+Shift+A** on macOS or **Ctrl+Alt+Shift+A** on Windows/Li
 those modes. Customize these shortcuts under **Settings → Keybindings**.
 
 To read one thread in light mode while the rest of the app stays dark, turn on **Light mode** in
-that thread's details card. The whole window uses your theme's light colors while the thread is
-open, and the choice is remembered for that thread on this device. **Turn on light mode for this
+that thread's details card. The thread area uses your theme's light colors while the thread is
+open; the sidebar keeps its dark colors. The choice is remembered for that thread on this device. **Turn on light mode for this
 thread** in the command palette and **Cmd+Option+Shift+L** on macOS or **Ctrl+Alt+Shift+L** on
 Windows/Linux do the same.
 
