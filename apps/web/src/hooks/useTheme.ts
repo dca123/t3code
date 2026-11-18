@@ -25,6 +25,12 @@ import {
   type ThemeHalves,
   type ThemePreferenceMode,
 } from "../themePalette";
+import {
+  invalidateThreadLightMode,
+  resolveShownAppearanceMode,
+  subscribeThreadLightMode,
+  THREAD_LIGHT_MODE_STORAGE_KEY,
+} from "../threadLightMode";
 
 type Theme = ThemePreference;
 type ThemeSnapshot = {
@@ -308,7 +314,7 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
   if (preservePreview && document.documentElement.dataset?.themeId === THEME_PREVIEW_ID) {
     return;
   }
-  const appearanceMode = readAppearanceModePreference(theme);
+  const appearanceMode = resolveShownAppearanceMode(readAppearanceModePreference(theme));
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
@@ -393,6 +399,10 @@ function syncDesktopTheme(
 
 if (typeof document !== "undefined" && typeof window !== "undefined") {
   applyTheme(getStored());
+  subscribeThreadLightMode(() => {
+    applyTheme(getStored(), { suppressTransitions: true });
+    emitChange();
+  });
 }
 
 function getSnapshot(): ThemeSnapshot {
@@ -403,14 +413,16 @@ function getSnapshot(): ThemeSnapshot {
   const theme = getStored();
   const appearanceMode = readAppearanceModePreference(theme);
   const followSystem = appearanceMode === "system";
-  const systemDark = followSystem ? getSystemDark() : false;
+  const shownMode = resolveShownAppearanceMode(appearanceMode);
+  const systemDark = shownMode === "system" ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
 
+  // The saved mode drives settings; what renders follows a lit thread too.
   const resolvedTheme = resolveThemeAppearance(
     theme,
     systemDark,
-    followSystem,
-    appearanceMode,
+    shownMode === "system",
+    shownMode,
     themeHalves,
   );
   if (
@@ -452,8 +464,13 @@ function handleStorageChange(e: StorageEvent) {
   } else if (e.key === THEME_APPEARANCE_MODE_STORAGE_KEY || e.key === THEME_HALVES_STORAGE_KEY) {
     applyTheme(getStored(), { suppressTransitions: true });
     emitChange();
+  } else if (e.key === THREAD_LIGHT_MODE_STORAGE_KEY) {
+    invalidateThreadLightMode();
   } else if (e.key === CUSTOM_THEMES_STORAGE_KEY || e.key === null) {
-    if (e.key === null) themeStorageReadFailure = null;
+    if (e.key === null) {
+      themeStorageReadFailure = null;
+      invalidateThreadLightMode();
+    }
     invalidateCustomThemes();
     lastAppliedTheme = null;
     applyTheme(getStored(), { suppressTransitions: true });

@@ -66,6 +66,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  LampDeskIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -80,6 +81,7 @@ import {
   TextSearchIcon,
   UserPlusIcon,
 } from "lucide-react";
+import { setThreadLightMode, useThreadLightMode } from "../threadLightMode";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
@@ -251,7 +253,7 @@ import {
   sourceControlHostIcon,
 } from "./CommandPaletteAddProject";
 import { useCommandPaletteThreadItems } from "./CommandPaletteThreadItems";
-import { useCommandPaletteThemeItems } from "./CommandPaletteThemeItems";
+import { notifyThemeSaveFailure, useCommandPaletteThemeItems } from "./CommandPaletteThemeItems";
 import {
   CommandPaletteVirtualizedResults,
   scrollCommandPaletteRowIntoView,
@@ -485,6 +487,9 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
+  const lightModeThreadRef =
+    paletteRouteTarget?.kind === "server" ? paletteRouteTarget.threadRef : null;
+  const threadLightModeOn = useThreadLightMode(lightModeThreadRef);
   const projects = useProjects();
   const referenceThreadRef =
     pathname === "/pull-requests"
@@ -1628,6 +1633,23 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push(changeThemeItem);
   actionItems.push(changeAppearanceItem);
+  if (lightModeThreadRef !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:thread-light-mode",
+      searchTerms: ["light mode", "lamp", "thread", "reading", "appearance", "bright"],
+      title: threadLightModeOn
+        ? "Turn off light mode for this thread"
+        : "Turn on light mode for this thread",
+      icon: <LampDeskIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "appearance.toggleThreadLight",
+      run: async () => {
+        if (!setThreadLightMode(lightModeThreadRef, !threadLightModeOn)) {
+          notifyThemeSaveFailure();
+        }
+      },
+    });
+  }
 
   actionItems.push(themeEditorItem);
 

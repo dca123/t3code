@@ -42,6 +42,7 @@ function runBootScript(options: {
   storage?: Record<string, string>;
   storageThrows?: boolean;
   prefersDark: boolean;
+  pathname?: string;
 }): BootResult {
   const classes = new Set<string>();
   const bootVariables: Record<string, string> = {};
@@ -82,6 +83,7 @@ function runBootScript(options: {
       },
     },
     matchMedia: () => ({ matches: options.prefersDark }),
+    location: { pathname: options.pathname ?? "/" },
   };
 
   const fakeCss = {
@@ -353,6 +355,22 @@ describe("index.html boot script", () => {
     expect(light.bootVariables["--boot-background"]).toBe(
       getThemeColorsForMode(T3_CHAT_THEME, "light")!.canvas,
     );
+  });
+
+  it("paints a thread with light mode on in its theme's light colors", () => {
+    const storage = {
+      [THEME_STORAGE_KEY]: "t3-chat",
+      [THEME_APPEARANCE_MODE_STORAGE_KEY]: "dark",
+      "t3code:thread-light-mode": JSON.stringify(["env:thread"]),
+    };
+
+    const lit = runBootScript({ storage, prefersDark: true, pathname: "/env/thread" });
+    expect(lit.isDark).toBe(false);
+    expect(lit.bootVariables["--boot-background"]).toBe(
+      getThemeColorsForMode(T3_CHAT_THEME, "light")!.canvas,
+    );
+    expect(runBootScript({ storage, prefersDark: true, pathname: "/env/other" }).isDark).toBe(true);
+    expect(runBootScript({ storage, prefersDark: true, pathname: "/settings" }).isDark).toBe(true);
   });
 
   it("paints the half's splash when the base theme no longer exists", () => {

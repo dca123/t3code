@@ -19,6 +19,7 @@
         const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
         const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
         const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+        const THREAD_LIGHT_MODE_STORAGE_KEY = "t3code:thread-light-mode";
         const SPLASH_COLORS = {
           light: {
             background: "#ffffff",
@@ -218,6 +219,20 @@
           );
         };
 
+        const isShownThreadLit = () => {
+          const segments = window.location.pathname.split("/").filter(Boolean);
+          if (segments.length !== 2) return false;
+          try {
+            const lit = JSON.parse(
+              window.localStorage.getItem(THREAD_LIGHT_MODE_STORAGE_KEY) ?? "[]",
+            );
+            const key = segments.map(decodeURIComponent).join(":");
+            return Array.isArray(lit) && lit.includes(key);
+          } catch {
+            return false;
+          }
+        };
+
         try {
           const storedTheme = window.localStorage.getItem("t3code:theme");
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -256,7 +271,7 @@
           const storedFollowSystem = window.localStorage.getItem(THEME_FOLLOW_SYSTEM_STORAGE_KEY);
           const preferenceMode =
             theme === "light" || theme === "dark" ? theme : (legacyMode ?? baseAppearance);
-          const appearanceMode = isThemePreferenceMode(storedAppearanceMode)
+          const savedAppearanceMode = isThemePreferenceMode(storedAppearanceMode)
             ? storedAppearanceMode
             : storedFollowSystem === "true"
               ? "system"
@@ -265,6 +280,8 @@
                 : theme === "system"
                   ? "system"
                   : preferenceMode;
+          // A thread with its lamp on paints light from the first frame, like the runtime.
+          const appearanceMode = isShownThreadLit() ? "light" : savedAppearanceMode;
           // A valid mix half for the wanted appearance takes over: it decides
           // light vs dark even when the base theme cannot render that mode.
           // Mirrors the runtime's halves-aware resolveThemeAppearance.

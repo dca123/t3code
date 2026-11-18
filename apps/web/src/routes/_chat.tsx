@@ -7,6 +7,7 @@ import { resolveThreadRouteTarget } from "../threadRoutes";
 import { retainThreadFindForRoute } from "../components/chat/threadFindStore";
 import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
 import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
+import { setShownThread } from "../threadLightMode";
 
 function ChatRouteLayout() {
   // Render both routes here so draft promotion keeps the same ChatView mounted.
@@ -42,7 +43,10 @@ export const Route = createFileRoute("/_chat")({
   // Every match carries the whole location's params, so this layout sees the thread route's too.
   onEnter: ({ context, params }) => retainThreadFindForRouteMatch(context.appModalPage, params),
   onStay: ({ context, params }) => retainThreadFindForRouteMatch(context.appModalPage, params),
-  onLeave: () => retainThreadFindForRoute({ modalPage: false, threadRef: null }),
+  onLeave: () => {
+    retainThreadFindForRoute({ modalPage: false, threadRef: null });
+    setShownThread(null);
+  },
 });
 
 function retainThreadFindForRouteMatch(
@@ -50,8 +54,8 @@ function retainThreadFindForRouteMatch(
   params: Partial<Record<"environmentId" | "threadId", string>>,
 ) {
   const target = resolveThreadRouteTarget(params);
-  retainThreadFindForRoute({
-    modalPage,
-    threadRef: target?.kind === "server" ? target.threadRef : null,
-  });
+  const threadRef = target?.kind === "server" ? target.threadRef : null;
+  retainThreadFindForRoute({ modalPage, threadRef });
+  // Settings and Usage draw over the thread that opened them, so its lamp stays on.
+  if (!modalPage) setShownThread(threadRef);
 }

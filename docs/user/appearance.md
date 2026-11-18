@@ -11,6 +11,12 @@ Use **Change appearance** in the command palette to choose System, Light, or Dar
 the theme. **Cmd+Option+Shift+A** on macOS or **Ctrl+Alt+Shift+A** on Windows/Linux cycles through
 those modes. Customize these shortcuts under **Settings → Keybindings**.
 
+To read one thread in light mode while the rest of the app stays dark, turn on **Light mode** in
+that thread's details card. The whole window uses your theme's light colors while the thread is
+open, and the choice is remembered for that thread on this device. **Turn on light mode for this
+thread** in the command palette and **Cmd+Option+Shift+L** on macOS or **Ctrl+Alt+Shift+L** on
+Windows/Linux do the same.
+
 On mobile, open **Settings → Appearance**. Mobile has its own themes and text,
 code, and terminal preferences. It does not follow environment themes or defaults.
 

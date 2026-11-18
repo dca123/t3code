@@ -14,6 +14,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { type CommandHandler, type CommandScopeOptions, registerCommands } from "./dispatcher";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
+import { isThreadLightModeOn, setThreadLightMode } from "../threadLightMode";
 
 function consume(event: KeyboardEvent): void {
   event.preventDefault();
@@ -74,6 +75,22 @@ export function installCommandPaletteCommands(
         toastManager.add({
           id: "appearance-cycle",
           title: `Appearance: ${APPEARANCE_OPTIONS.find((option) => option.mode === nextMode)?.label}`,
+          timeout: 1500,
+        });
+      },
+      "appearance.toggleThreadLight": (event) => {
+        consume(event);
+        if (event.repeat) return;
+        const threadRef = readRouteThreadRef();
+        if (threadRef === null) return;
+        const on = !isThreadLightModeOn(threadRef);
+        if (!setThreadLightMode(threadRef, on)) {
+          notifyThemeSaveFailure();
+          return;
+        }
+        toastManager.add({
+          id: "thread-light-mode",
+          title: on ? "Light mode on for this thread" : "Light mode off for this thread",
           timeout: 1500,
         });
       },
