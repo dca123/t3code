@@ -99,6 +99,13 @@ project starts a new thread there on its next run.
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
 
+Choose **Cron** for a schedule the other options can't express, such as `0 10 19 * *` for
+10:00 on the 19th of each month. Enter five fields (minute, hour, day of month, month, day of
+week) and an IANA time zone such as `Asia/Colombo`; the task runs at that wall-clock time in
+that zone. Agents can create and change cron tasks with the same schedule. On mobile, cron
+tasks are shown and keep their schedule when edited, but the schedule itself is changed on web
+or desktop.
+
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
 immediately.
