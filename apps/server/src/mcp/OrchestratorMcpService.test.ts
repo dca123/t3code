@@ -3725,6 +3725,43 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
+    it.effect("reports a cron task's next run in UTC and in its own time zone", () =>
+      Effect.gen(function* () {
+        const cronTask: ScheduledTask = {
+          ...existing,
+          schedule: { type: "cron", expression: "0 10 19 * *", timeZone: "Asia/Colombo" },
+          nextRunAt: "2026-12-19T04:30:00.000Z",
+        };
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              masterRepository,
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              cronTask,
+            ),
+          ),
+        );
+        const { tasks } = yield* mcp.listScheduledTasks(client, {
+          projectId,
+          scheduledTaskId: cronTask.id,
+        });
+        assert.deepEqual(
+          tasks.map(({ schedule, nextRunAt, nextRunAtLocal }) => ({
+            schedule,
+            nextRunAt,
+            nextRunAtLocal,
+          })),
+          [
+            {
+              schedule: cronTask.schedule,
+              nextRunAt: "2026-12-19T04:30:00.000Z",
+              nextRunAtLocal: "2026-12-19T10:00:00.000+05:30",
+            },
+          ],
+        );
+      }),
+    );
+
     it.effect("uses the environment's default model when the project inherits it", () =>
       Effect.gen(function* () {
         const environmentDefault = {

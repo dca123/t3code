@@ -128,6 +128,9 @@ function describeSchedule(task: ScheduledTask, timeZone?: string): string {
     return `Once, ${formatRunAtDate(runAt)} at ${formatRunAtTime(runAt)}`;
   }
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
+  if (task.schedule.type === "cron") {
+    return `Cron ${task.schedule.expression} ${task.schedule.timeZone}`;
+  }
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
   const zone = scheduleTimeZoneLabel(timeZone, task.nextRunAt);
   return `${days} at ${formatTime(task.schedule.timeOfDay)}${zone === undefined ? "" : ` ${zone}`}`;
@@ -1071,6 +1074,9 @@ function TaskForm({
                   ? [{ value: "once" as const, label: "Once" }]
                   : []),
                 { value: "interval", label: "Interval" },
+                ...(draft.schedule.cron !== null
+                  ? [{ value: "cron" as const, label: "Cron" }]
+                  : []),
                 ...(webhookDenial === undefined || draft.schedule.mode === "webhook"
                   ? [{ value: "webhook" as const, label: "On webhook" }]
                   : []),

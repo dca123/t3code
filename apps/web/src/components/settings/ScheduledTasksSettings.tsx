@@ -176,6 +176,8 @@ const EMPTY_DRAFT: DraftState = {
   runAt: "",
   savedRunAt: "",
   weekdays: new Set([1, 2, 3, 4, 5]),
+  cronExpression: "0 9 * * 1-5",
+  cronTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   projectId: "",
   threadId: "",
   threadMode: "new_thread",
@@ -1828,6 +1830,7 @@ function ScheduledTaskEditorForm({
                     mode === "fixed" ||
                     mode === "once" ||
                     mode === "interval" ||
+                    mode === "cron" ||
                     mode === "webhook"
                   )
                     setDraft((current) => {
@@ -1858,6 +1861,7 @@ function ScheduledTaskEditorForm({
                   <Toggle value="once">Once</Toggle>
                 ) : null}
                 <Toggle value="interval">Every interval</Toggle>
+                <Toggle value="cron">Cron</Toggle>
                 <Toggle
                   value="webhook"
                   disabled={webhookDenial !== undefined && draft.scheduleMode !== "webhook"}
@@ -2048,6 +2052,35 @@ function ScheduledTaskEditorForm({
                     </Field>
                   </div>
                 ) : null}
+              </div>
+            ) : draft.scheduleMode === "cron" ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="scheduled-task-cron">Cron</Label>
+                  <Input
+                    id="scheduled-task-cron"
+                    nativeInput
+                    className="w-40"
+                    placeholder="0 9 * * 1-5"
+                    value={draft.cronExpression}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, cronExpression: event.target.value }))
+                    }
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="scheduled-task-cron-zone">Time zone</Label>
+                  <Input
+                    id="scheduled-task-cron-zone"
+                    nativeInput
+                    className="w-44"
+                    placeholder="Asia/Colombo"
+                    value={draft.cronTimeZone}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, cronTimeZone: event.target.value }))
+                    }
+                  />
+                </div>
               </div>
             ) : draft.scheduleMode === "once" ? (
               <div className="flex items-center gap-2">

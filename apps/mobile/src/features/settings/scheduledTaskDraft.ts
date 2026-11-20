@@ -53,12 +53,14 @@ export function scheduledTaskDefaultModel(
 }
 
 export type ScheduleDraft = {
-  readonly mode: "fixed_time" | "once" | "interval" | "webhook";
+  readonly mode: "fixed_time" | "once" | "interval" | "cron" | "webhook";
   readonly timeOfDay: string;
   /** ISO time for a one-time run. Empty until the user picks the "Once" mode. */
   readonly runAt: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
+  /** Cron schedules are created by agents; mobile shows and keeps them but does not edit them. */
+  readonly cron: { readonly expression: string; readonly timeZone: string } | null;
   readonly signature: ScheduledTaskWebhookSignature | null;
   readonly maxDeliveryAgeMinutes: string;
   readonly replayKey: string;
@@ -75,6 +77,7 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   runAt: "",
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
+  cron: null,
   signature: null,
   maxDeliveryAgeMinutes: "",
   replayKey: "",
@@ -96,6 +99,12 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
       };
     case "once":
       return { ...DEFAULT_SCHEDULE, mode: "once", runAt: task.schedule.runAt };
+    case "cron":
+      return {
+        ...DEFAULT_SCHEDULE,
+        mode: "cron",
+        cron: { expression: task.schedule.expression, timeZone: task.schedule.timeZone },
+      };
     case "interval":
       return {
         ...DEFAULT_SCHEDULE,
@@ -176,6 +185,9 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
   if (draft.mode === "once") {
     const runAt = new Date(draft.runAt);
     return Number.isNaN(runAt.getTime()) ? null : { type: "once", runAt: runAt.toISOString() };
+  }
+  if (draft.mode === "cron") {
+    return draft.cron === null ? null : { type: "cron", ...draft.cron };
   }
   if (draft.mode === "interval") {
     const minutes = parseIntervalMinutes(draft.intervalMinutes);

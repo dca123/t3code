@@ -23,6 +23,22 @@ describe("ScheduledTaskSchedule", () => {
     });
   });
 
+  it("accepts a five-field cron expression with an IANA time zone", () => {
+    const schedule = { type: "cron", expression: "0 10 19 * *", timeZone: "Asia/Colombo" };
+    expect(decodeUpsertSchedule(schedule)).toEqual(schedule);
+    expect(decodeSchedule(schedule)).toEqual(schedule);
+    for (const invalid of [
+      { expression: "0 10 32 * *", timeZone: "Asia/Colombo" },
+      { expression: "0 0 10 19 * *", timeZone: "Asia/Colombo" },
+      { expression: "0 10 19 *", timeZone: "Asia/Colombo" },
+      { expression: "0 10 19 * *", timeZone: "Mars/Base" },
+      { expression: "0 10 19 * *", timeZone: "+05:30" },
+      { expression: "0 10 19 * *", timeZone: "IST" },
+    ]) {
+      expect(() => decodeUpsertSchedule({ type: "cron", ...invalid })).toThrow();
+    }
+  });
+
   it("accepts a one-time run only with an offset", () => {
     for (const runAt of ["2026-11-03T09:00Z", "2026-11-03T09:00:00.000-08:00"]) {
       expect(decodeUpsertSchedule({ type: "once", runAt })).toEqual({ type: "once", runAt });

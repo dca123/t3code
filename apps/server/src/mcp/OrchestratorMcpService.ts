@@ -291,6 +291,13 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     freshSession: scheduledTaskThreadMode(task) === "fresh_session",
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
+    ...(task.schedule.type === "cron" && task.nextRunAt !== null
+      ? {
+          nextRunAtLocal: DateTime.formatIsoOffset(
+            DateTime.makeZonedUnsafe(task.nextRunAt, { timeZone: task.schedule.timeZone }),
+          ),
+        }
+      : {}),
     lastRunStatus: task.lastRunStatus,
     ...(task.webhook?.url == null || !mayRun || task.blockedByPolicy !== undefined
       ? {}

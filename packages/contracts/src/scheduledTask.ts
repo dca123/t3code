@@ -1,3 +1,4 @@
+import * as Cron from "effect/Cron";
 import * as Schema from "effect/Schema";
 
 import {
@@ -62,6 +63,39 @@ function isIsoWithOffset(value: string): boolean {
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
   return days !== undefined && day >= 1 && day <= days;
 }
+
+/** An IANA zone name such as Asia/Colombo; offsets and abbreviations are refused. */
+export function isIanaTimeZone(value: string): boolean {
+  if (!/^[A-Za-z_]+(\/[A-Za-z0-9_+-]+)+$/.test(value) && value !== "UTC") return false;
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: value }).resolvedOptions().timeZone !== "";
+  } catch {
+    return false;
+  }
+}
+
+/** Five fields only: minute hour day-of-month month day-of-week. */
+export function cronExpressionError(expression: string, timeZone: string): string | null {
+  if (expression.trim().split(/\s+/).length !== 5) {
+    return "Expected five cron fields: minute hour day-of-month month day-of-week.";
+  }
+  const parsed = Cron.parse(expression, timeZone);
+  return parsed._tag === "Success" ? null : parsed.failure.message;
+}
+
+const ScheduledTaskCronSchedule = Schema.Struct({
+  type: Schema.Literal("cron"),
+  expression: TrimmedNonEmptyString.annotate({
+    description: "Five fields: minute hour day-of-month month day-of-week, such as 0 10 19 * *.",
+  }),
+  timeZone: TrimmedNonEmptyString.check(
+    Schema.makeFilter((value) => isIanaTimeZone(value) || "Expected an IANA time zone."),
+  ).annotate({ description: "IANA zone, such as Asia/Colombo." }),
+}).check(
+  Schema.makeFilter(
+    (schedule) => cronExpressionError(schedule.expression, schedule.timeZone) ?? true,
+  ),
+);
 
 // Checked by filter, not pattern, to keep the MCP tool schema small.
 const ScheduledTaskOnceSchedule = Schema.Struct({
@@ -195,6 +229,7 @@ export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskIntervalSchedule,
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
+  ScheduledTaskCronSchedule,
   ScheduledTaskWebhookSchedule,
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
@@ -210,6 +245,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   }),
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
+  ScheduledTaskCronSchedule,
   ScheduledTaskUpsertWebhookSchedule,
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
