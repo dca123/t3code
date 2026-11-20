@@ -1498,9 +1498,10 @@ it.effect.each(["stale", "tracked", "missing", "in_use", "folder", "running"] as
           );
           if (state === "stale") {
             assert.equal(restored.branch, "old");
+            // Git lists physical paths, such as /private/var for /var on macOS.
             assert.include(
               (yield* command(cwd, ["worktree", "list", "--porcelain"])).stdout,
-              "worktree " + other,
+              "worktree " + (yield* fs.realPath(directory)) + "/other",
             );
           }
           if (state === "tracked")

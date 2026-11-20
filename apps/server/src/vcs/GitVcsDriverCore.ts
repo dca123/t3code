@@ -5149,10 +5149,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         input.cwd,
         [],
       );
-      const target = path.resolve(worktreePath);
-      const registrations = registered.stdout.split("\0\0").map((record) => record.split("\0"));
+      // Git reports physical paths (macOS /private/var for /var), and the missing folder itself
+      // cannot be resolved, so compare through its nearest existing parent.
+      const physicalPath = (candidate: string) =>
+        fileSystem.realPath(path.dirname(candidate)).pipe(
+          Effect.map((parent) => path.join(parent, path.basename(candidate))),
+          Effect.orElseSucceed(() => path.resolve(candidate)),
+        );
+      const target = yield* physicalPath(worktreePath);
+      const records = registered.stdout.split("\0\0").map((record) => record.split("\0"));
+      const registrations = yield* Effect.forEach(records, ([folder, ...fields]) =>
+        folder?.startsWith("worktree ")
+          ? physicalPath(folder.slice("worktree ".length)).pipe(
+              Effect.map((resolved) => [`worktree ${resolved}`, ...fields] as const),
+            )
+          : Effect.succeed([folder, ...fields] as const),
+      );
       const normalizeWorktree = (field: string | undefined) =>
-        field?.startsWith("worktree ") ? path.resolve(field.slice("worktree ".length)) : null;
+        field?.startsWith("worktree ") ? field.slice("worktree ".length) : null;
       replaceStaleRegistration = registrations.some(
         ([folder, ...fields]) =>
           normalizeWorktree(folder) === target &&
