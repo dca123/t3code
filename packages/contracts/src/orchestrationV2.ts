@@ -720,6 +720,7 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
+export const ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE = "workspace_missing";
 
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
@@ -1566,6 +1567,7 @@ export const OrchestrationV2ProviderFailure = Schema.Struct({
   class: OrchestrationV2ProviderFailureClass,
   message: OrchestrationV2ProviderFailureMessage,
   code: Schema.NullOr(OrchestrationV2ProviderFailureCode),
+  workspaceMissingPath: Schema.optional(Schema.String),
   retryable: Schema.NullOr(Schema.Boolean),
   resetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
@@ -3834,6 +3836,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getNativeChildWork: "orchestration.getNativeChildWork",
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
+  recreateWorktree: "orchestration.recreateWorktree",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeShell: "orchestration.subscribeShell",
@@ -4482,6 +4485,19 @@ export class OrchestrationV2SearchThreadError extends Schema.TaggedError<Orchest
   }
 }
 
+export const ThreadWorktreeRecoveryResult = Schema.Struct({
+  worktreePath: Schema.String,
+  branch: Schema.String,
+  branchRecovery: Schema.Literals(["reused", "tracked", "missing", "in_use", "detached"]),
+  setupWarning: Schema.NullOr(Schema.String),
+});
+export type ThreadWorktreeRecoveryResult = typeof ThreadWorktreeRecoveryResult.Type;
+
+export class ThreadWorktreeRecoveryError extends Schema.TaggedError<ThreadWorktreeRecoveryError>()(
+  "ThreadWorktreeRecoveryError",
+  { message: Schema.String },
+) {}
+
 export const OrchestrationV2RpcSchemas = {
   searchThread: {
     input: OrchestrationV2SearchThreadInput,
@@ -4534,6 +4550,10 @@ export const OrchestrationV2RpcSchemas = {
   forceStopThread: {
     input: OrchestrationV2ForceStopThreadInput,
     output: OrchestrationV2ForceStopThreadResult,
+  },
+  recreateWorktree: {
+    input: Schema.Struct({ threadId: ThreadId }),
+    output: ThreadWorktreeRecoveryResult,
   },
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,

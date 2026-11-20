@@ -8,10 +8,12 @@ import {
   WorktreeMcpHandoffResult,
   WorktreeMcpStatusResult,
   ThreadId,
+  ThreadWorktreeRecoveryResult,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -84,7 +86,24 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+const WorktreeRecreateTool = Tool.make("t3_worktree_recreate", {
+  description:
+    "Recreate an idle thread's missing git worktree at its original path. Runs the project setup script. Does not send or resume a turn. Use the affected thread's ID, not your running thread.",
+  parameters: Schema.Struct({ threadId: ThreadId }),
+  success: ThreadWorktreeRecoveryResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ThreadLaunchService.ThreadLaunchService,
+  ],
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false);
+
 export const WorktreeToolkit = Toolkit.make(
+  WorktreeRecreateTool,
   WorktreeHandoffTool,
   WorktreeStatusTool,
   WorktreeListTool,

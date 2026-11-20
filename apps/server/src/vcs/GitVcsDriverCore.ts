@@ -5141,6 +5141,65 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         worktreePath = `${basePath}-${suffix}`;
       }
     }
+    const recreate = options?.requireMissingPath === true;
+    let replaceStaleRegistration = false;
+    if (recreate) {
+      const registered = yield* executeWorktreeList(
+        "GitVcsDriver.recreateWorktree.list",
+        input.cwd,
+        [],
+      );
+      const target = path.resolve(worktreePath);
+      const registrations = registered.stdout.split("\0\0").map((record) => record.split("\0"));
+      const normalizeWorktree = (field: string | undefined) =>
+        field?.startsWith("worktree ") ? path.resolve(field.slice("worktree ".length)) : null;
+      replaceStaleRegistration = registrations.some(
+        ([folder, ...fields]) =>
+          normalizeWorktree(folder) === target &&
+          fields.some((field) => field === "prunable" || field.startsWith("prunable ")),
+      );
+      if (
+        replaceStaleRegistration &&
+        registrations.some(
+          ([folder, ...fields]) =>
+            normalizeWorktree(folder) !== target &&
+            fields.includes(`branch refs/heads/${targetBranch}`),
+        )
+      ) {
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.createWorktree",
+          command: "git worktree add",
+          cwd: input.cwd,
+          detail: `Branch '${targetBranch}' is registered in another worktree.`,
+        });
+      }
+    }
+    const verifyMissingPath = fileSystem.lstat(worktreePath).pipe(
+      Effect.matchEffect({
+        onFailure: (cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.void
+            : Effect.fail(
+                new GitCommandError({
+                  operation: "GitVcsDriver.createWorktree",
+                  command: "git worktree add",
+                  cwd: input.cwd,
+                  detail: `Could not check worktree path: ${worktreePath}`,
+                  cause,
+                }),
+              ),
+        onSuccess: () =>
+          Effect.fail(
+            new GitCommandError({
+              operation: "GitVcsDriver.createWorktree",
+              command: "git worktree add",
+              cwd: input.cwd,
+              detail: `The worktree path already exists: ${worktreePath}. Move it aside before retrying.`,
+            }),
+          ),
+      }),
+    );
+    if (recreate) yield* verifyMissingPath;
     const newRefName = input.newRefName;
     // Older Git still creates worktrees normally, but cannot prove ownership for cancellation.
     const addHelp = newRefName
@@ -5179,7 +5238,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: "unbounded" },
     );
     const checkoutWorkers = configuredCheckoutWorkers ?? "0";
-    const fastCheckout = checkoutCache !== undefined && options?.fastCheckout === true;
+    const fastCheckout = !recreate && checkoutCache !== undefined && options?.fastCheckout === true;
     const cacheGeneration = fastCheckout ? yield* checkoutCache.currentGeneration : 0;
     const stockCheckout = executeGitWithStableDiagnostics(
       "GitVcsDriver.createWorktree",
@@ -5189,6 +5248,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         `checkout.workers=${checkoutWorkers}`,
         "worktree",
         "add",
+        ...(replaceStaleRegistration ? ["--force"] : []),
         ...(lockReason ? ["--lock", "--reason", lockReason] : []),
         "--",
         worktreePath,
@@ -5217,6 +5277,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : {}),
       },
     );
+    const checkedStockCheckout = recreate
+      ? verifyMissingPath.pipe(Effect.andThen(stockCheckout))
+      : stockCheckout;
     // Set inside the claim's uninterruptible region: a pending cancel still surfaces as it ends.
     let claimed = false;
     const onWorktreeClaimed = progress?.onWorktreeClaimed;
@@ -5231,7 +5294,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               lockReason,
             })
             .pipe(Effect.flatMap((cloned) => (cloned ? Effect.void : stockCheckout)))
-        : stockCheckout
+        : checkedStockCheckout
     ).pipe(
       Effect.andThen(
         fastCheckout ? checkoutCache.schedule(worktreePath, cacheGeneration) : Effect.void,

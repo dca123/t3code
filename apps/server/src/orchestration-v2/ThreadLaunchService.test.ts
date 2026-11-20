@@ -255,6 +255,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerReceipts,
         layerOrchestrator,
         IdAllocator.layer,
+        NodeServices.layer,
         options.getLaunchSettings === undefined
           ? Layer.empty
           : Layer.mock(ServerSettings.ServerSettingsService)({
@@ -1402,6 +1403,11 @@ const withRealGitRepo = <A, E, R>(
         git: {
           resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
           resolvePrimaryRemoteName: () => git.resolvePrimaryRemoteName(cwd),
+          listLocalBranchNames: () => git.listLocalBranchNames(cwd),
+          listRefs: (input) => git.listRefs({ ...input, cwd }),
+          remoteBranchExists: (input) => git.remoteBranchExists({ ...input, cwd }),
+          resolveRemoteTrackingCommit: (input) =>
+            git.resolveRemoteTrackingCommit({ ...input, cwd }),
           resolveDefaultBranchName: (_cwd, remoteName) =>
             git.resolveDefaultBranchName(cwd, remoteName),
           currentBranch: () =>
@@ -1422,6 +1428,104 @@ const withRealGitRepo = <A, E, R>(
       ),
     ),
   );
+
+it.effect.each(["stale", "tracked", "missing", "in_use", "folder", "running"] as const)(
+  "recovers a thread worktree according to its %s state",
+  (state) =>
+    withRealGitRepo(({ directory, cwd, worktreePath, command, harness }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* command(cwd, ["commit", "--allow-empty", "-m", "Default"]);
+        const defaultHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+        if (state === "missing" || state === "tracked") {
+          const remote = directory + "/remote.git";
+          yield* command(cwd, ["init", "--bare", remote]);
+          yield* command(cwd, ["remote", "add", "origin", remote]);
+          yield* command(cwd, ["push", "origin", "beta"]);
+          yield* command(cwd, [
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/beta",
+          ]);
+        }
+        yield* command(cwd, ["commit", "--allow-empty", "-m", "Local checkout"]);
+        const localHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* command(cwd, ["worktree", "add", "-b", "old", worktreePath]);
+        if (state === "tracked") yield* command(cwd, ["push", "origin", "old"]);
+        const other = directory + "/other";
+        if (state === "stale") {
+          yield* command(cwd, ["worktree", "add", "-b", "other", other]);
+          yield* fs.remove(other, { recursive: true });
+        }
+        const fixture = harness();
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadLaunch.ThreadLaunchService;
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const { threadId } = yield* service.launch(
+            launchInput({
+              command: "command:launch:recover",
+              thread: "thread:launch:recover",
+              workspace: { type: "existing_worktree", branch: "old", worktreePath },
+              ...(state === "running" ? { message: "Keep working" } : {}),
+            }),
+          );
+          if (state === "in_use") yield* command(cwd, ["worktree", "move", worktreePath, other]);
+          else if (state === "stale") yield* fs.remove(worktreePath, { recursive: true });
+          else yield* command(cwd, ["worktree", "remove", worktreePath]);
+          if (state === "missing" || state === "tracked")
+            yield* command(cwd, ["branch", "-D", "old"]);
+          if (state === "folder") {
+            yield* fs.makeDirectory(worktreePath);
+            yield* fs.writeFileString(worktreePath + "/keep.txt", "keep me");
+          }
+          if (state === "folder" || state === "running") {
+            const failure = yield* service.recreateWorktree({ threadId }).pipe(Effect.flip);
+            assert.match(failure.message, state === "folder" ? /already exists/ : /running turn/);
+            if (state === "folder")
+              assert.equal(yield* fs.readFileString(worktreePath + "/keep.txt"), "keep me");
+            else assert.isFalse(yield* fs.exists(worktreePath));
+            return;
+          }
+          const restored = yield* service.recreateWorktree({ threadId });
+          assert.equal(restored.branchRecovery, state === "stale" ? "reused" : state);
+          assert.equal(restored.worktreePath, worktreePath);
+          const shell = yield* threads.getThreadShell(threadId);
+          assert.equal(shell?.worktreePath, worktreePath);
+          assert.equal(shell?.branch, restored.branch);
+          assert.equal(
+            (yield* command(worktreePath, ["branch", "--show-current"])).stdout.trim(),
+            restored.branch,
+          );
+          if (state === "stale") {
+            assert.equal(restored.branch, "old");
+            assert.include(
+              (yield* command(cwd, ["worktree", "list", "--porcelain"])).stdout,
+              "worktree " + other,
+            );
+          }
+          if (state === "tracked")
+            assert.equal(
+              (yield* command(worktreePath, [
+                "rev-parse",
+                "--abbrev-ref",
+                "@{upstream}",
+              ])).stdout.trim(),
+              "origin/old",
+            );
+          if (state === "missing" || state === "in_use") assert.notEqual(restored.branch, "old");
+          if (state === "in_use")
+            assert.equal(
+              (yield* command(other, ["branch", "--show-current"])).stdout.trim(),
+              "old",
+            );
+          assert.equal(
+            (yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
+            state === "missing" ? defaultHead : localHead,
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+);
 
 const launchFromBase = (harness: ReturnType<typeof makeHarness>, baseRef: string) =>
   Effect.gen(function* () {
@@ -2501,6 +2605,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
         isNonGitProject: launches.isNonGitProject,
         retryPreparation: launches.retryPreparation,
         prepareRun: launches.prepareRun,
+        recreateWorktree: launches.recreateWorktree,
       }),
       Effect.flip,
     );

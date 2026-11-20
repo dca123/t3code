@@ -1,4 +1,5 @@
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
+import { RecreateWorktreeButton } from "./WorktreeRecovery";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
   getQuestionAnswerPreview,
@@ -8,6 +9,7 @@ import {
 } from "@t3tools/client-runtime/work-log/user-input";
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+  ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
   type EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -293,6 +295,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           <p className="ms-7 whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-foreground/80">
             {failureItem.failure.message}
           </p>
+        ) : null}
+        {failureItem.failure.code === ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE &&
+        failureItem.failure.workspaceMissingPath !== undefined ? (
+          <div className="ms-7 pb-1 empty:hidden">
+            <RecreateWorktreeButton path={failureItem.failure.workspaceMissingPath} />
+          </div>
         ) : null}
         {retryRunId !== null && onRetryWorkspacePreparation ? (
           <div className="ms-7 pb-1">

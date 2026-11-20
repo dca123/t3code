@@ -66,6 +66,7 @@ import {
   type ResponseContextRecord,
   type ChatFileAttachment,
   isProviderNativeSubagentThread,
+  ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -337,6 +338,12 @@ import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import {
+  missingWorktreeBanner,
+  useWorktreeRecovery,
+  WorktreeRecoveryContext,
+} from "./chat/WorktreeRecovery";
+
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
@@ -1657,6 +1664,12 @@ export default function ChatView(props: ChatViewProps) {
     !serverThreadHistory.hasMoreHistory &&
     findRevertCheckpoint(serverProjection?.checkpoints ?? [], 0) !== undefined;
 
+  const missingWorkspaceFailure = serverVisibleTurnItems.findLast(
+    ({ item }) =>
+      item.type === "error" &&
+      item.failure.code === ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE &&
+      item.failure.workspaceMissingPath === activeThread?.worktreePath,
+  );
   const workspaceMutationId = deriveWorkspaceMutationId(
     serverVisibleTurnItems,
     turnDiffSummaries.at(-1)?.completedAt ?? null,
@@ -1674,9 +1687,23 @@ export default function ChatView(props: ChatViewProps) {
     data: useAtomValue(gitStatusAtom ? chatGitStatusAtom(gitStatusAtom) : NO_CHAT_GIT_STATUS_ATOM),
     refresh: useEnvironmentQueryRefresh(gitStatusAtom).refresh,
   };
+  const workspaceMissing = gitStatusQuery.data?.workspaceMissing === true;
+  const missingWorktreePath =
+    isServerThread && workspaceMissing && !activeProjectIsScratch
+      ? (activeThread?.worktreePath ?? null)
+      : null;
+  const worktreeRecovery = useWorktreeRecovery({
+    environmentId,
+    threadId: isServerThread ? (activeThread?.id ?? null) : null,
+    path: missingWorktreePath,
+    blocked: deriveCanInterruptRunningThread(isServerThread, activeRuntime),
+    refresh: gitStatusQuery.refresh,
+  });
   useWorkspaceMutationRefresh({
     enabled: gitStatusCwd !== null,
-    mutationId: workspaceMutationId,
+    mutationId: missingWorkspaceFailure
+      ? `${missingWorkspaceFailure.item.id}:${workspaceMutationId ?? ""}`
+      : workspaceMutationId,
     refresh: gitStatusQuery.refresh,
     resourceKey: `git-status:${activeThreadKey ?? ""}:${gitStatusCwd ?? ""}`,
   });
@@ -2670,6 +2697,7 @@ export default function ChatView(props: ChatViewProps) {
         : [];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
+        ...(missingWorktreePath === null ? [] : [missingWorktreeBanner(missingWorktreePath)]),
         ...feedbackBannerItems,
         ...fallbackItems,
         ...limitRecoveryItems,
@@ -2681,6 +2709,7 @@ export default function ChatView(props: ChatViewProps) {
       ];
     }
     return [
+      ...(missingWorktreePath === null ? [] : [missingWorktreeBanner(missingWorktreePath)]),
       ...feedbackBannerItems,
       ...fallbackItems,
       ...limitRecoveryItems,
@@ -3892,6 +3921,7 @@ export default function ChatView(props: ChatViewProps) {
                 />
 
                 <ThreadDetailsPanel
+                  workspaceMissing={workspaceMissing}
                   anchor={threadPanelPopoverAnchorRef}
                   handle={threadPanelPopoverHandle}
                   forceNewWorktree={multipleModelSelections !== null}
@@ -4072,7 +4102,7 @@ export default function ChatView(props: ChatViewProps) {
       cwd={activeWorkspaceRoot}
       checkpoints={serverProjection?.checkpoints}
     >
-      {content}
+      <WorktreeRecoveryContext value={worktreeRecovery}>{content}</WorktreeRecoveryContext>
     </FileMetadataThreadProvider>
   );
 }

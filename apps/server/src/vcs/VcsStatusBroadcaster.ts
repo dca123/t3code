@@ -341,6 +341,13 @@ export const make = Effect.gen(function* () {
   ) {
     const includeBranchChanges = wantsBranchChanges(cwd);
     const local = yield* workflow.localStatus({ cwd }, { includeBranchChanges });
+    if (!local.isRepo) {
+      const workspaceMissing = yield* fs.stat(cwd).pipe(
+        Effect.map((info) => info.type !== "Directory"),
+        Effect.catch((error) => Effect.succeed(error.reason._tag === "NotFound")),
+      );
+      return { local: { ...local, workspaceMissing }, includesBranchChanges: includeBranchChanges };
+    }
     // A subscriber that shows totals arrived during the read and must not receive it without them.
     if (!includeBranchChanges && wantsBranchChanges(cwd)) {
       return {

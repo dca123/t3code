@@ -339,6 +339,17 @@ describe("applyGitStatusStreamEvent", () => {
       behindCount: 1,
       pr: null,
     });
+    const missing: VcsStatusResult = {
+      ...current,
+      isRepo: false,
+      refName: null,
+      workspaceMissing: true,
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    };
+    expect(
+      applyGitStatusStreamEvent(missing, { _tag: "remoteUpdated", remote: null }),
+    ).toMatchObject({ isRepo: false, workspaceMissing: true });
   });
 });
 

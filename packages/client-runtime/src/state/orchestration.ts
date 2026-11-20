@@ -206,6 +206,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:force-stop-thread",
       tag: ORCHESTRATION_V2_WS_METHODS.forceStopThread,
     }),
+    recreateWorktree: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:recreate-worktree",
+      tag: ORCHESTRATION_V2_WS_METHODS.recreateWorktree,
+    }),
     turnItem: (target: {
       readonly environmentId: EnvironmentId;
       readonly input: OrchestrationV2GetTurnItemInput;

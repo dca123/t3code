@@ -296,7 +296,11 @@ describe("VcsStatusBroadcaster", () => {
           broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
         ).pipe(Scope.provide(detailScope));
         assert.deepEqual(yield* details, [
-          { _tag: "snapshot", local: state.currentLocalStatus, remote: null },
+          {
+            _tag: "snapshot",
+            local: { ...state.currentLocalStatus, workspaceMissing: true },
+            remote: null,
+          },
         ]);
         const callsWithDetail = state.localStatusCalls;
         const extraBranches = yield* Stream.toPull(
@@ -350,7 +354,7 @@ describe("VcsStatusBroadcaster", () => {
         };
         yield* broadcaster.refreshBranchStatus({ cwd: "/repo" });
         assert.deepEqual(yield* reopened, [
-          { _tag: "localUpdated", local: state.currentLocalStatus },
+          { _tag: "localUpdated", local: { ...state.currentLocalStatus, workspaceMissing: true } },
         ]);
         assert.deepEqual(yield* branches, [{ refName: null, isRepo: false }]);
         assert.equal(state.remoteStatusCalls, 0);

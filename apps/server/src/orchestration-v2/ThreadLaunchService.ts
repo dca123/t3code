@@ -20,7 +20,10 @@ import {
   type RuntimeMode,
   type ScheduledTaskId,
   ThreadId,
+  ThreadWorktreeRecoveryError,
+  type ThreadWorktreeRecoveryResult,
 } from "@t3tools/contracts";
+import * as Path from "effect/Path";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -58,6 +61,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -228,10 +232,14 @@ export class ThreadLaunchService extends Context.Service<
       | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
     readonly prepareRun: (input: ThreadLaunchPreparationInput) => Effect.Effect<void>;
+    readonly recreateWorktree: (input: {
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<ThreadWorktreeRecoveryResult, ThreadWorktreeRecoveryError>;
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 
 const isThreadLaunchError = Schema.is(ThreadLaunchError);
+const isThreadWorktreeRecoveryError = Schema.is(ThreadWorktreeRecoveryError);
 
 function failureDetail(error: unknown): string {
   if (isThreadLaunchError(error)) {
@@ -258,6 +266,8 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const eventSink = yield* EventSink.EventSinkV2;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const path = yield* Path.Path;
+
   // A project-folder launch that names no branch records the folder's checkout, as the composer does.
   const launchBranch = (strategy: ThreadLaunchWorkspaceStrategy, workspaceRoot: string) =>
     strategy.type === "root" && strategy.branch === undefined
@@ -1503,7 +1513,146 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const recoveryError = (message: string) => new ThreadWorktreeRecoveryError({ message });
+
+  const recoveryBranch = Effect.fn("ThreadLaunchService.recoveryBranch")(function* (
+    cwd: string,
+    oldBranch: string | null,
+    worktreePath: string,
+  ) {
+    const remote = yield* git.resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
+    const localBranches = yield* git.listLocalBranchNames(cwd);
+    let branchRecovery: ThreadWorktreeRecoveryResult["branchRecovery"] = "detached";
+    if (oldBranch !== null) {
+      if (localBranches.includes(oldBranch)) {
+        const { refs } = yield* git.listRefs({ cwd, query: oldBranch, refKind: "local" });
+        const owner = refs.find((ref) => ref.name === oldBranch)?.worktreePath;
+        if (owner == null || path.resolve(owner) === path.resolve(worktreePath)) {
+          return {
+            refName: oldBranch,
+            branch: oldBranch,
+            newRefName: undefined,
+            branchRecovery: "reused" as const,
+          };
+        }
+        branchRecovery = "in_use";
+      } else if (
+        remote !== null &&
+        (yield* git.remoteBranchExists({ cwd, remoteName: remote, refName: oldBranch }))
+      ) {
+        return {
+          refName: `refs/remotes/${remote}/${oldBranch}`,
+          branch: oldBranch,
+          newRefName: oldBranch,
+          branchRecovery: "tracked" as const,
+        };
+      } else {
+        branchRecovery = "missing";
+      }
+    }
+    const remoteDefault = remote === null ? null : yield* git.resolveDefaultBranchName(cwd, remote);
+    const defaultBranch =
+      remoteDefault ?? ["main", "master"].find((name) => localBranches.includes(name)) ?? null;
+    const defaultRemote =
+      remote === null ||
+      defaultBranch === null ||
+      !(yield* git.remoteBranchExists({ cwd, remoteName: remote, refName: defaultBranch }))
+        ? null
+        : yield* git.resolveRemoteTrackingCommit({
+            cwd,
+            refName: defaultBranch,
+            fallbackRemoteName: remote,
+          });
+    const refName =
+      defaultRemote?.commitSha ?? (defaultBranch === null ? "HEAD" : `refs/heads/${defaultBranch}`);
+    if (!(yield* git.hasCommit({ cwd, refName }))) {
+      return yield* recoveryError(
+        "The project has no default branch commit to recreate this worktree from.",
+      );
+    }
+    const branch = `t3-recovered-${(yield* randomUuidV4).slice(0, 12)}`;
+    return { refName, branch, newRefName: branch, branchRecovery };
+  });
+
+  const recreateWorktree: ThreadLaunchService["Service"]["recreateWorktree"] = Effect.fn(
+    "ThreadLaunchService.recreateWorktree",
+  )(
+    function* ({ threadId }) {
+      const initial = yield* threads.getThreadShell(threadId);
+      const worktreePath = initial?.worktreePath ?? null;
+      if (initial === null || worktreePath === null) {
+        return yield* recoveryError("This thread is not attached to a worktree.");
+      }
+      const project = Option.getOrNull(yield* projects.getById(initial.projectId));
+      if (
+        project === null ||
+        !path.isAbsolute(worktreePath) ||
+        path.resolve(worktreePath) === path.resolve(project.workspaceRoot)
+      ) {
+        return yield* recoveryError("This thread has no separate worktree to recreate.");
+      }
+      const restored = yield* withWorkspaceLease(
+        path.resolve(worktreePath),
+        Effect.gen(function* () {
+          const current = yield* threads.getThreadShell(threadId);
+          if (
+            current === null ||
+            current.worktreePath !== worktreePath ||
+            current.branch !== initial.branch
+          ) {
+            return yield* recoveryError(
+              "The thread's checkout changed. Refresh the thread and try again.",
+            );
+          }
+          if (current.activeRunId !== null) {
+            return yield* recoveryError("Stop the running turn before recreating its worktree.");
+          }
+          const cwd = project.workspaceRoot;
+          const plan = yield* recoveryBranch(cwd, current.branch, worktreePath);
+          const result = yield* git.createWorktree(
+            {
+              cwd,
+              refName: plan.refName,
+              ...(plan.newRefName === undefined ? {} : { newRefName: plan.newRefName }),
+              path: worktreePath,
+            },
+            { requireMissingPath: true },
+          );
+          if (current.branch !== plan.branch) {
+            yield* threads.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`recreate-worktree:${yield* randomUuidV4}`),
+              threadId,
+              branch: plan.branch,
+              expectedBranch: current.branch,
+              expectedWorktreePath: worktreePath,
+            });
+          }
+          return {
+            worktreePath: result.worktree.path,
+            branch: plan.branch,
+            branchRecovery: plan.branchRecovery,
+          };
+        }),
+      );
+      const setup = yield* setupScripts
+        .runForThread({
+          threadId,
+          projectId: project.id,
+          projectCwd: project.workspaceRoot,
+          worktreePath,
+          project,
+        })
+        .pipe(Effect.result);
+      return { ...restored, setupWarning: setup._tag === "Failure" ? setup.failure.message : null };
+    },
+    Effect.mapError((error) =>
+      isThreadWorktreeRecoveryError(error) ? error : recoveryError(error.message),
+    ),
+  );
+
   return ThreadLaunchService.of({
+    recreateWorktree,
     launch,
     checkWorktreeBase,
     isNonGitProject,

@@ -57,6 +57,7 @@ interface ThreadDetailsPanelProps extends Pick<
   threadId: ThreadId;
   projectId: ProjectId;
   worktreePath: string | null;
+  workspaceMissing?: boolean;
   isServerThread: boolean;
   draftId?: DraftId;
   composerDraftTarget: ComposerThreadTarget;
@@ -253,7 +254,11 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         composerTarget={props.composerDraftTarget}
                       />
                     ) : null}
-                    {show.git && props.gitCwd ? (
+                    {show.git && props.workspaceMissing ? (
+                      <p className="px-2 py-1.5 text-sm text-muted-foreground">
+                        Workspace folder is missing
+                      </p>
+                    ) : show.git && props.gitCwd ? (
                       <GitActionsControl
                         compact={density !== "full"}
                         showActions={visible.gitActions}

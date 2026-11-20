@@ -3,6 +3,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import {
   CommandId,
   latestProviderTurnForAttempt,
+  ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
@@ -38,7 +39,9 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import { makeRestoreMissingWorktree } from "../workspace/restoreMissingWorktree.ts";
+
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -132,6 +135,8 @@ export const isProviderTurnStartRunStateMissingError = Schema.is(
 
 const START_GAVE_UP_MESSAGE =
   "T3 Code could not start this turn. Send the message again; if it keeps failing, check the server logs.";
+
+const isProviderWorkspaceMissing = Schema.is(ProviderWorkspaceMissingError);
 
 const startFailureMessage = (error: Error): string => {
   const nestedCause = "cause" in error ? error.cause : undefined;
@@ -530,6 +535,9 @@ export const layer: Layer.Layer<
           readonly error: Error;
           readonly message?: string;
         }) {
+          const cause = "cause" in failed.error ? failed.error.cause : undefined;
+          const workspace = isProviderWorkspaceMissing(failed.error) ? failed.error : cause;
+          const missingWorkspace = isProviderWorkspaceMissing(workspace) ? workspace : null;
           yield* settleRunBeforeStart({
             run,
             rootNode,
@@ -543,11 +551,19 @@ export const layer: Layer.Layer<
             item: {
               type: "error",
               title: failed.title,
-              failure: makeProviderFailure({
-                cause: failed.error,
-                message: failed.message ?? startFailureMessage(failed.error),
-                class: "provider_error",
-              }),
+              failure: {
+                ...makeProviderFailure({
+                  cause: failed.error,
+                  message: failed.message ?? startFailureMessage(failed.error),
+                  class: "provider_error",
+                  ...(missingWorkspace === null
+                    ? {}
+                    : { code: ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE }),
+                }),
+                ...(missingWorkspace === null
+                  ? {}
+                  : { workspaceMissingPath: missingWorkspace.cwd }),
+              },
             },
           });
         },

@@ -54,6 +54,7 @@ import {
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -2755,6 +2756,25 @@ effectIt.effect("terminalizes a starting run when its provider session cannot op
           message: "DESCRIPTION is not valid ACP JSON",
         },
       },
+    ]);
+  }),
+);
+
+effectIt.effect("identifies a missing workspace in the persisted session-open failure", () =>
+  Effect.gen(function* () {
+    const cwd = "/tmp/missing-worktree";
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new ProviderWorkspaceMissingError({
+        threadId: ThreadId.make("thread:missing"),
+        cwd,
+      }),
+    });
+
+    yield* harness.start;
+
+    expect(harness.projection().turnItems).toMatchObject([
+      { type: "error", failure: { code: "workspace_missing", workspaceMissingPath: cwd } },
     ]);
   }),
 );

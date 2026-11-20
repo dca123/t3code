@@ -512,22 +512,24 @@ it.effect("requires access management to answer a link request", () =>
   }),
 );
 
-it.effect("honors exact empty permissions and preserves legacy parent grants", () =>
-  Effect.gen(function* () {
-    const registry = yield* setup;
-    const git = createCommandPermissions(runtime, WS_METHODS.vcsInit);
-    registry.set(sessions(env), AsyncResult.success({ ...grant(true), permissions: [] }));
-    expect(registry.get(git.permissionAtom(env))).toBe(false);
-    const denied = yield* git.authorize(registry, env).pipe(Effect.flip);
-    expect(denied).toMatchObject({
-      requiredPermission: AuthSourceControlWriteScope,
-      requiredScope: AuthOrchestrationOperateScope,
-    });
-    const { permissions: _exact, ...legacy } = grant(true);
-    registry.set(sessions(env), AsyncResult.success(legacy));
-    expect(registry.get(git.permissionAtom(env))).toBe(true);
-    yield* git.authorize(registry, env);
-  }),
+it.effect.each([WS_METHODS.vcsInit, ORCHESTRATION_V2_WS_METHODS.recreateWorktree])(
+  "honors exact empty permissions and legacy parent grants for %s",
+  (tag) =>
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const git = createCommandPermissions(runtime, tag);
+      registry.set(sessions(env), AsyncResult.success({ ...grant(true), permissions: [] }));
+      expect(registry.get(git.permissionAtom(env))).toBe(false);
+      const denied = yield* git.authorize(registry, env).pipe(Effect.flip);
+      expect(denied).toMatchObject({
+        requiredPermission: AuthSourceControlWriteScope,
+        requiredScope: AuthOrchestrationOperateScope,
+      });
+      const { permissions: _exact, ...legacy } = grant(true);
+      registry.set(sessions(env), AsyncResult.success(legacy));
+      expect(registry.get(git.permissionAtom(env))).toBe(true);
+      yield* git.authorize(registry, env);
+    }),
 );
 
 it.effect("rejects protected unary and streamed RPCs outside a guarded command", () =>
