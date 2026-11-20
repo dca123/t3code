@@ -4,7 +4,15 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { use, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import {
+  use,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { MessageSquareIcon } from "lucide-react";
 import { createPortal } from "react-dom";
 import {
@@ -75,15 +83,6 @@ export function AssistantSelectionToolbar({
       event.stopPropagation();
     }
   });
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the toolbar DOM node and clamps its position inside the window before paint
-  useLayoutEffect(() => {
-    const toolbar = toolbarRef.current;
-    if (!toolbar || !selection) return;
-    const rect = toolbar.getBoundingClientRect();
-    toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
-    toolbar.style.top = `${Math.max(8, Math.min(selection.position.y, window.innerHeight - rect.height - 8))}px`;
-  }, [selection]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to document selectionchange and keydown to track text selections in the viewport
   useEffect(() => {
@@ -222,7 +221,45 @@ export function AssistantSelectionToolbar({
   }, [backgroundThread, threadRef, viewport]);
 
   if (!selection) return null;
-  const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
+  return (
+    <AssistantSelectionActions
+      toolbarRef={toolbarRef}
+      position={selection.position}
+      tooLong={selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH}
+      onCite={cite}
+      onDismiss={dismiss}
+      portal={document.body}
+    />
+  );
+}
+
+export function AssistantSelectionActions({
+  toolbarRef,
+  position,
+  tooLong,
+  onCite,
+  onDismiss,
+  portal,
+}: {
+  toolbarRef: RefObject<HTMLDivElement | null>;
+  position: SelectionActionPoint;
+  tooLong: boolean;
+  onCite: (action: "comment" | "preset", comment?: string) => boolean;
+  onDismiss: () => void;
+  portal: HTMLElement;
+}) {
+  const backgroundThread = use(BackgroundThreadContext);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clamps the toolbar inside the window before paint
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current;
+    if (!toolbar) return;
+    const rect = toolbar.getBoundingClientRect();
+    const left = Math.max(8, Math.min(position.x, window.innerWidth - rect.width - 8));
+    const top = Math.max(8, Math.min(position.y, window.innerHeight - rect.height - 8));
+    const bounds = portal === document.body ? null : portal.getBoundingClientRect();
+    toolbar.style.left = `${left - (bounds === null ? 0 : bounds.left + portal.clientLeft)}px`;
+    toolbar.style.top = `${top - (bounds === null ? 0 : bounds.top + portal.clientTop)}px`;
+  }, [portal, position, toolbarRef]);
   return createPortal(
     <div
       ref={toolbarRef}
@@ -230,13 +267,13 @@ export function AssistantSelectionToolbar({
       aria-label="Annotate selection"
       data-assistant-selection-toolbar={backgroundThread ? undefined : "true"}
       className="fixed z-50 flex max-w-[calc(100vw-1rem)] gap-1 rounded-md border border-border bg-popover p-1 shadow-md"
-      style={{ left: selection.position.x, top: selection.position.y }}
+
       onPointerDown={(event) => event.preventDefault()}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {
           event.preventDefault();
-          dismiss();
+          onDismiss();
         }
       }}
     >
@@ -246,7 +283,7 @@ export function AssistantSelectionToolbar({
         variant="ghost"
         aria-label={tooLong ? undefined : "Comment"}
         disabled={tooLong}
-        onClick={() => cite("comment")}
+        onClick={() => onCite("comment")}
       >
         {tooLong ? "Shorten selection" : <MessageSquareIcon aria-hidden="true" />}
       </Button>
@@ -256,7 +293,7 @@ export function AssistantSelectionToolbar({
         variant="ghost"
         aria-label="Looks good"
         disabled={tooLong}
-        onClick={() => cite("preset", "Looks good")}
+        onClick={() => onCite("preset", "Looks good")}
       >
         {"\uD83D\uDC4D"}
       </Button>
@@ -266,11 +303,11 @@ export function AssistantSelectionToolbar({
         variant="ghost"
         aria-label="Can you explain this?"
         disabled={tooLong}
-        onClick={() => cite("preset", "Can you explain this?")}
+        onClick={() => onCite("preset", "Can you explain this?")}
       >
         {"\u2753"}
       </Button>
     </div>,
-    document.body,
+    portal,
   );
 }

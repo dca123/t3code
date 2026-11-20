@@ -3,7 +3,7 @@ import type { AssistantCitation, MessageId, ScopedThreadRef } from "@t3tools/con
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import {
   resolveAssistantCitationRange,
-  type AssistantCitationSourceAnchor,
+  type AssistantMessageSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import { toastManager } from "../ui/toast";
 import { observeResize } from "~/lib/observeResize";
@@ -22,7 +22,7 @@ export function observeAssistantCitationCommentSource({
   citation,
   onUnavailable,
 }: {
-  anchor: AssistantCitationSourceAnchor;
+  anchor: AssistantMessageSourceAnchor;
   citation: AssistantCitation;
   onUnavailable: () => void;
 }): () => void {
@@ -97,6 +97,22 @@ export interface AssistantCitationTarget extends AssistantCitationRequest {
     pulse?: { startedAt: number; reducedMotion: boolean };
   }>;
   onComplete: () => void;
+}
+
+export function scrollToCitedPage(
+  list: LegendListRef,
+  rowId: string,
+  target: AssistantCitationTarget,
+) {
+  const activation = target.activationRef.current;
+  if (activation.scrolled || activation.dismissed) return;
+  const index = list.getState().indexByKey(rowId);
+  if (index === undefined) return;
+  activation.scrolled = true;
+  const complete = () => {
+    if (!activation.dismissed) target.onComplete();
+  };
+  void list.scrollToIndex({ index, animated: false }).then(complete, complete);
 }
 
 function observeAssistantCitationSource({

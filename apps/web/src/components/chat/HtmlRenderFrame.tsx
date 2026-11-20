@@ -16,6 +16,10 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
+import {
+  HtmlRenderAnnotatedDocument,
+  type HtmlRenderCitationSource,
+} from "./HtmlRenderAnnotatedDocument";
 import { observeResize } from "~/lib/observeResize";
 
 const MIN_URL_LIFE_MS = 5 * 60_000;
@@ -25,6 +29,7 @@ export function HtmlRenderFrame(props: {
   readonly htmlRender: HtmlRenderReference;
   readonly threadRef: ScopedThreadRef | undefined;
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
+  readonly citationSource?: HtmlRenderCitationSource | undefined;
 }) {
   const { attachmentId, title } = props.htmlRender;
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
@@ -59,6 +64,13 @@ export function HtmlRenderFrame(props: {
   // Tied to the viewer's lifetime: unmounting while expanded must still release
   // the timeline's follow pin, which a close handler alone never reaches.
   const expanded = expandedSrc !== null;
+  const documentProps = {
+    title,
+    threadRef: props.threadRef,
+    className: "block size-full",
+    onContentHeight: setContentHeight,
+    onFullscreenChange,
+  };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the parent's fullscreen pin while expanded and releases it on collapse or unmount
   useEffect(() => {
     if (!expanded) return;
@@ -70,14 +82,16 @@ export function HtmlRenderFrame(props: {
     <div ref={observeBox} className="group/html-render relative" style={{ height }}>
       {src !== null ? (
         <>
-          <HtmlRenderDocument
-            src={src}
-            title={title}
-            threadRef={props.threadRef}
-            className="block size-full"
-            onContentHeight={setContentHeight}
-            onFullscreenChange={onFullscreenChange}
-          />
+          {props.citationSource ? (
+            <HtmlRenderAnnotatedDocument
+              {...documentProps}
+              src={src}
+              htmlRender={props.htmlRender}
+              source={props.citationSource}
+            />
+          ) : (
+            <HtmlRenderDocument {...documentProps} src={src} />
+          )}
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
             <Tooltip>
               <TooltipTrigger
@@ -112,6 +126,7 @@ export function HtmlRenderFrame(props: {
               src={expandedSrc}
               htmlRender={props.htmlRender}
               threadRef={props.threadRef}
+              citationSource={props.citationSource}
               onClose={() => setExpandedSrc(null)}
             />
           ) : null}

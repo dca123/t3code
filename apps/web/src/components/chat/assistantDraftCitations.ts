@@ -10,6 +10,7 @@ export function mergeDraftCitation(prompt: string, citation: AssistantCitation) 
       saved.environmentId === citation.environmentId &&
       saved.threadId === citation.threadId &&
       saved.messageId === citation.messageId &&
+      saved.page?.attachmentId === citation.page?.attachmentId &&
       saved.start === citation.start &&
       saved.end === citation.end,
   );

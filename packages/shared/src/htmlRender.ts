@@ -5,6 +5,17 @@ import {
   type ThemeColors,
 } from "./themePalettes.ts";
 import { EVENT_CODE_SHORTCUT_KEYS } from "./keybindings.ts";
+import { HTML_RENDER_ANNOTATIONS_SCRIPT } from "./htmlRenderAnnotations.ts";
+
+export {
+  HTML_RENDER_ANNOTATIONS_QUERY,
+  HTML_RENDER_MAX_PAGE_BYTES,
+  htmlRenderAnnotationState,
+  htmlRenderSelectionState,
+  readHtmlRenderAnnotationEvent,
+  type HtmlRenderAnnotationEvent,
+  type HtmlRenderAnnotationRect,
+} from "./htmlRenderAnnotations.ts";
 
 export const HTML_RENDER_TOOL_NAME = "html_render";
 export const HTML_RENDER_MIN_HEIGHT = 80;
@@ -448,7 +459,17 @@ const blankNonMarkup = (html: string) => {
 
 export function injectHtmlRenderBootstrap(html: string): string {
   const scan = blankNonMarkup(html);
-  const markup = bootstrapMarkup(scan);
+  return insertHeadMarkup(html, scan, bootstrapMarkup(scan));
+}
+
+const ANNOTATION_MARKUP = `<style>::highlight(t3-page-citation){background-color:color-mix(in oklab,var(--primary) 45%,transparent)}::highlight(t3-page-citation-reveal){background-color:color-mix(in oklab,var(--primary) 65%,transparent)}</style><script>${HTML_RENDER_ANNOTATIONS_SCRIPT}</script>`;
+
+export function injectHtmlRenderAnnotations(html: string): string {
+  if (html.includes(ANNOTATION_MARKUP)) return html;
+  return insertHeadMarkup(html, blankNonMarkup(html), ANNOTATION_MARKUP);
+}
+
+function insertHeadMarkup(html: string, scan: string, markup: string): string {
   const headOpen = /<head(?:\s(?:[^"'>]|"[^"]*"|'[^']*')*)?>/i.exec(scan);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;

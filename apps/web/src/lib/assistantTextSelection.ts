@@ -10,16 +10,25 @@ export type AssistantTextSelector = {
   readonly suffix: string;
 };
 
-export type AssistantCitationSourceAnchor = {
+export type AssistantMessageSourceAnchor = {
   source: HTMLElement;
   range: Range;
   viewport: HTMLElement;
 };
 
+export type AssistantCitationSourceAnchor =
+  | AssistantMessageSourceAnchor
+  | {
+      source: HTMLIFrameElement;
+      portal: HTMLElement | null;
+      getBoundingClientRect: () => DOMRect;
+    };
+
 export function findAssistantCitationSourceAnchor(
   document: Document,
   citation: AssistantCitation,
-): AssistantCitationSourceAnchor | null {
+): AssistantMessageSourceAnchor | null {
+  if (citation.page !== undefined) return null;
   const source = [
     ...document.querySelectorAll<HTMLElement>("[data-assistant-citation-source]"),
   ].find(

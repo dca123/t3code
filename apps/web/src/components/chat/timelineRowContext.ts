@@ -30,6 +30,8 @@ import { type MessagesTimelineRow, type WorkGroupScrollAnchor } from "./Messages
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import type { TurnItemDetailSource } from "../../state/queries";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
+import type { CiteAssistantText } from "./HtmlRenderAnnotatedDocument";
+import type { ComposerThreadTarget } from "~/composerDraftStore";
 
 /**
  * Where an expanded row reads an item's detail and a command's output. The owner's rows read them
@@ -51,6 +53,7 @@ export interface TimelineRowSharedState {
     | ((requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>)
     | undefined;
   citationRequest: AssistantCitationTarget | null;
+  pageComments: { draftTarget: ComposerThreadTarget; onCite: CiteAssistantText } | null;
   /** Absent hides "Reply", as in the guest view. */
   onReplyToResponse: ((response: ResponseContextRecord) => boolean) | undefined;
   listRef: React.RefObject<LegendListRef | null>;

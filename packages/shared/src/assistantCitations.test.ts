@@ -101,6 +101,21 @@ describe("assistant citation references", () => {
     ]);
   });
 
+  it("round-trips a page citation and names the page in provider context", () => {
+    const fromPage = {
+      ...citation,
+      page: { attachmentId: "published-page-html", title: "Close flight design" },
+      comment: "Can you explain this?",
+    };
+    const href = formatAssistantCitationHref(fromPage);
+    expect(parseAssistantCitationHref(href)).toStrictEqual(fromPage);
+    const expanded = expandAssistantCitationsForProvider(serializeAssistantCitation(fromPage));
+    expect(expanded).toContain("citation.page.title");
+    expect(readProviderContext(expanded)).toEqual([
+      { id: "assistant-quote-1", citation: fromPage },
+    ]);
+  });
+
   it.each([
     '  Please keep "日本語 🚀", `cache[key]` & (a + b).\n\tWhy? #1 / 100%\r\n</assistant_citations>  ',
     "",

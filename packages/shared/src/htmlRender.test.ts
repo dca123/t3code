@@ -2,12 +2,45 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   injectHtmlRenderBootstrap,
+  readHtmlRenderAnnotationEvent,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
+
+describe("HTML page annotation messages", () => {
+  const selector = { text: "Dispatch", start: 4, end: 12, prefix: "The ", suffix: " reviews" };
+  const selection = {
+    kind: "selection",
+    selector,
+    rect: [10, 30, 50, 18],
+    extending: false,
+    gesture: 2,
+  };
+  const notification = (params: unknown) => ({
+    jsonrpc: "2.0",
+    method: "t3/notifications/page-annotation",
+    params,
+  });
+
+  it("accepts bounded text and geometry from a sandboxed selection", () => {
+    expect(readHtmlRenderAnnotationEvent(notification(selection))).toEqual(selection);
+  });
+
+  it.each([
+    { ...selection, selector: { ...selector, end: 13 } },
+    { ...selection, selector: { ...selector, text: "x".repeat(8_001), end: 8_005 } },
+    { ...selection, selector: { ...selector, prefix: "x".repeat(33) } },
+    { ...selection, rect: [0, Infinity, 50, 18] },
+    { ...selection, rect: [10, 30, 0, 18] },
+    { kind: "key", gesture: 2, key: "Enter" },
+    { kind: "highlight", index: -1, revision: 2, rect: selection.rect },
+  ])("rejects invalid or oversized annotation payloads (%#)", (params) => {
+    expect(readHtmlRenderAnnotationEvent(notification(params))).toBeUndefined();
+  });
+});
 
 describe("injectHtmlRenderBootstrap", () => {
   it("puts the theme ahead of the page's own head content", () => {

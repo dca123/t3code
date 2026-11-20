@@ -1,6 +1,11 @@
-import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
+import {
+  htmlRenderAnnotationState,
+  htmlRenderSelectionState,
+  injectHtmlRenderAnnotations,
+  injectHtmlRenderBootstrap,
+} from "@t3tools/shared/htmlRender";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -14,6 +19,54 @@ const sizeChanged = (height: number) => ({
 });
 
 describe("HtmlRenderDocument", () => {
+  it("reports a trusted selection inside the sandbox and forwards typing after acknowledgement", async () => {
+    const html = injectHtmlRenderAnnotations(
+      injectHtmlRenderBootstrap(
+        "<!doctype html><body><span>Dispatch</span> reviews the manifest.</body>",
+      ),
+    );
+    const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+    const received = vi.fn();
+    await using screen = await render(
+      <HtmlRenderDocument
+        src={src}
+        title="Manifest"
+        annotations={{
+          onLoad: (frame) =>
+            frame.contentWindow?.postMessage(htmlRenderAnnotationState([], 1, null), "*"),
+          onEvent: (frame, event) => {
+            received(event);
+            if (event.kind === "selection")
+              frame.contentWindow?.postMessage(htmlRenderSelectionState(event.gesture), "*");
+          },
+        }}
+      />,
+    );
+    const word = page
+      .frameLocator(screen.getByTitle("Manifest"))
+      .getByText("Dispatch", { exact: true });
+    await word.dblClick();
+    await vi.waitFor(() =>
+      expect(received).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "selection",
+          selector: {
+            text: "Dispatch",
+            start: 0,
+            end: 8,
+            prefix: "",
+            suffix: " reviews the manifest.",
+          },
+        }),
+      ),
+    );
+    await userEvent.keyboard("p");
+    await vi.waitFor(() =>
+      expect(received).toHaveBeenCalledWith(expect.objectContaining({ kind: "key", key: "p" })),
+    );
+  });
+
   it("reports the page's first height and ignores messages from other windows", async () => {
     using pageUrl = (() => {
       const page = `<script>parent.postMessage(${JSON.stringify(sizeChanged(321))}, "*");</script>`;

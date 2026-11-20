@@ -6,6 +6,11 @@ import {
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
+import {
+  HTML_RENDER_ANNOTATIONS_QUERY,
+  HTML_RENDER_MAX_PAGE_BYTES,
+  injectHtmlRenderAnnotations,
+} from "@t3tools/shared/htmlRender";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
@@ -29,7 +34,12 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
-import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  readBoundedHtml,
+  readMcpAppHtml,
+  resolveAsset,
+} from "./assets/AssetAccess.ts";
 import { sourceControlMediaResponse } from "./assets/sourceControlMediaResponse.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -167,12 +177,29 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     readonly mimeType?: string;
     readonly file?: OpenMediaFile;
     readonly renderIntent?: "mcp-app";
+    readonly annotateHtml?: true;
   },
   rangeHeader?: string,
   ifRangeHeader?: string,
   method: "GET" | "HEAD" = "GET",
 ) {
   const headers = assetResponseHeaders(asset.path, asset);
+  if (
+    asset.annotateHtml &&
+    !asset.download &&
+    headers["Content-Type"] === "text/html; charset=utf-8"
+  ) {
+    const bytes = yield* readBoundedHtml(asset.path, HTML_RENDER_MAX_PAGE_BYTES);
+    if (bytes === null)
+      return HttpServerResponse.text("Page is too large to preview.", { status: 413 });
+    const body = new TextEncoder().encode(
+      injectHtmlRenderAnnotations(new TextDecoder().decode(bytes)),
+    );
+    headers["Content-Length"] = String(body.byteLength);
+    return method === "HEAD"
+      ? HttpServerResponse.empty({ status: 200, headers })
+      : HttpServerResponse.uint8Array(body, { headers });
+  }
   if (
     asset.renderIntent === "mcp-app" &&
     !asset.download &&
@@ -432,6 +459,7 @@ export const layerAssetRoute = HttpRouter.add(
     const asset = yield* resolveAsset(
       suffix.slice(0, separatorIndex),
       suffix.slice(separatorIndex + 1),
+      url.value.searchParams.get(HTML_RENDER_ANNOTATIONS_QUERY) === "1",
     );
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });

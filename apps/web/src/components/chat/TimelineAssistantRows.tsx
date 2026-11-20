@@ -2,7 +2,7 @@ import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipel
 import { MessageId, type RunId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { agentWorkingDirectories } from "@t3tools/client-runtime/workspace-basename-lookup";
-import { memo, use, useState } from "react";
+import { memo, use, useEffect, useState } from "react";
 import { type ChatMessage, type TurnDiffSummary } from "../../types";
 import ChatMarkdown from "../ChatMarkdown";
 import { GitForkIcon, ReplyIcon } from "lucide-react";
@@ -22,7 +22,7 @@ import {
   useQuietThreadShell,
 } from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { AssistantCitationSource } from "./AssistantCitationSource";
+import { AssistantCitationSource, scrollToCitedPage } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -369,6 +369,16 @@ export function HtmlRenderTimelineRow({
   const ctx = use(TimelineRowCtx);
   const { onAppFullscreenChange } = ctx;
   const onFullscreenChange = (fullscreen: boolean) => onAppFullscreenChange(row.id, fullscreen);
+  const reveal =
+    ctx.citationRequest?.citation.messageId === row.id &&
+    ctx.citationRequest.citation.page?.attachmentId === row.htmlRender.attachmentId
+      ? ctx.citationRequest
+      : null;
+  const list = ctx.listRef;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- brings the cited virtual row into view before its iframe can load
+  useEffect(() => {
+    if (reveal && list.current) scrollToCitedPage(list.current, row.id, reveal);
+  }, [list, reveal, row.id]);
 
   if (ctx.renderHtmlRender) {
     return <div className="min-w-0 px-1">{ctx.renderHtmlRender(row)}</div>;
@@ -380,6 +390,16 @@ export function HtmlRenderTimelineRow({
         environmentId={ctx.activeThreadEnvironmentId}
         htmlRender={row.htmlRender}
         threadRef={ctx.threadRef ?? undefined}
+        citationSource={
+          ctx.pageComments && ctx.threadRef
+            ? {
+                ...ctx.pageComments,
+                threadRef: ctx.threadRef,
+                messageId: MessageId.make(row.id),
+                reveal,
+              }
+            : undefined
+        }
         onFullscreenChange={onFullscreenChange}
       />
     </div>

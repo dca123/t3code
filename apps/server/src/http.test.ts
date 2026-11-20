@@ -26,11 +26,41 @@ import {
   MCP_APP_MAX_HTML_BYTES,
 } from "@t3tools/shared/mcpApp";
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
+import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 
 import * as ServerConfig from "./config.ts";
 
 import { assetResponseHeaders, assetFileResponse, downloadContentDisposition } from "./http.ts";
 import * as ServerHttp from "./http.ts";
+
+it.effect(
+  "adds page annotations at serve time without re-injecting the theme or changing the saved page",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-page-comments-" });
+      const file = path.join(directory, "page.html");
+      const legacy = injectHtmlRenderBootstrap(
+        "<!doctype html><html><head></head><body><p>Dispatch</p></body></html>",
+      );
+      yield* fs.writeFileString(file, legacy);
+      const asset = { path: file, mimeType: "text/html", annotateHtml: true } as const;
+      const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+      const served = yield* Effect.promise(() => response.text());
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-security-policy")).toBe(
+        "sandbox allow-scripts allow-forms allow-popups allow-downloads",
+      );
+      expect(served).toContain("t3/notifications/page-annotation-state");
+      expect(served.match(/id="t3-theme"/g)).toHaveLength(1);
+      expect(served).toContain("<p>Dispatch</p>");
+      expect(yield* fs.readFileString(file)).toBe(legacy);
+      yield* fs.writeFileString(file, served);
+      const second = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+      expect(yield* Effect.promise(() => second.text())).toBe(served);
+    }).pipe(Effect.provide(layerFileResponse)),
+);
 
 describe("MCP app asset responses", () => {
   it.effect(

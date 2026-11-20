@@ -3,7 +3,7 @@ import { useEffect, useEffectEvent } from "react";
 import { useComposerDraftStore, type ComposerThreadTarget } from "~/composerDraftStore";
 import {
   resolveAssistantCitationRange,
-  type AssistantCitationSourceAnchor,
+  type AssistantMessageSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import {
   collectAssistantCitations,
@@ -22,11 +22,12 @@ export function AssistantDraftHighlights({
   viewport: HTMLElement | null;
   threadRef: ScopedThreadRef;
   draftTarget: ComposerThreadTarget;
-  onEdit: (citation: AssistantCitation, anchor: AssistantCitationSourceAnchor) => void;
+  onEdit: (citation: AssistantCitation, anchor: AssistantMessageSourceAnchor) => void;
 }) {
   // A primitive key keeps typing elsewhere in the draft from re-resolving every highlight.
   const citationKey = useComposerDraftStore((store) =>
     draftCitationsForThread(store.getComposerDraft(draftTarget)?.prompt ?? "", threadRef)
+      .filter((citation) => citation.page === undefined)
       .map(serializeAssistantCitation)
       .join(" "),
   );
@@ -38,7 +39,7 @@ export function AssistantDraftHighlights({
     const registry = CSS.highlights;
     const highlight = registry.get(HIGHLIGHT_NAME) ?? new Highlight();
     registry.set(HIGHLIGHT_NAME, highlight);
-    let ranges: { citation: AssistantCitation; anchor: AssistantCitationSourceAnchor }[] = [];
+    let ranges: { citation: AssistantCitation; anchor: AssistantMessageSourceAnchor }[] = [];
     const clear = () => {
       for (const { anchor } of ranges) highlight.delete(anchor.range);
       ranges = [];

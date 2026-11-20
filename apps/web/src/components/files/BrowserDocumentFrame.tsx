@@ -16,6 +16,8 @@ import {
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
+  readHtmlRenderAnnotationEvent,
+  type HtmlRenderAnnotationEvent,
 } from "@t3tools/shared/htmlRender";
 import {
   isMacPlatform,
@@ -181,6 +183,12 @@ export function HtmlRenderDocument(props: {
   readonly title: string;
   readonly className?: string;
   readonly threadRef?: ScopedThreadRef | undefined;
+  readonly annotations?:
+    | {
+        readonly onLoad: (frame: HTMLIFrameElement) => void;
+        readonly onEvent: (frame: HTMLIFrameElement, event: HtmlRenderAnnotationEvent) => void;
+      }
+    | undefined;
   readonly onContentHeight?: (height: number) => void;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
@@ -284,6 +292,18 @@ export function HtmlRenderDocument(props: {
       props.onContentHeight?.(height);
       return;
     }
+    if (props.annotations) {
+      const annotation = readHtmlRenderAnnotationEvent(event.data);
+      if (annotation !== undefined) {
+        if (
+          annotation.kind === "dismiss" ||
+          (document.activeElement === frame && navigator.userActivation?.isActive === true)
+        ) {
+          props.annotations.onEvent(frame, annotation);
+        }
+        return;
+      }
+    }
     if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
     const linkRequest = readHtmlRenderLinkRequest(event.data);
     if (linkRequest !== undefined) {
@@ -327,11 +347,12 @@ export function HtmlRenderDocument(props: {
         // Lets a page's video or image viewer take the screen.
         allow="fullscreen"
         loading="lazy"
-        onLoad={() => {
+        onLoad={(event) => {
           setLoaded(true);
           // Covers a theme change that landed while the page was loading.
           postTheme();
           postShortcuts();
+          props.annotations?.onLoad(event.currentTarget);
         }}
         // Match the blank document's scheme to avoid dark-mode white flashes, then follow the app after load.
         className={cn("border-0 scheme-light", props.className)}

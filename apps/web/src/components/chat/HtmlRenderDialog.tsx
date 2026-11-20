@@ -12,12 +12,17 @@ import { observeResize } from "~/lib/observeResize";
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
+import {
+  HtmlRenderAnnotatedDocument,
+  type HtmlRenderCitationSource,
+} from "./HtmlRenderAnnotatedDocument";
 
 export function HtmlRenderDialog(props: {
   readonly src: string;
   readonly htmlRender: HtmlRenderReference;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onClose: () => void;
+  readonly citationSource?: HtmlRenderCitationSource | undefined;
 }) {
   const { title } = props.htmlRender;
   const [zoom, setZoom] = useState(1);
@@ -35,6 +40,13 @@ export function HtmlRenderDialog(props: {
   // Zoom divides the page's layout width, so the page reflows to fill the card
   // at every level, and the frame is as tall as the page so only the card scrolls.
   const height = htmlRenderFrameHeight(props.htmlRender, width / zoom, contentHeight);
+  const documentProps = {
+    src: props.src,
+    title,
+    threadRef: props.threadRef,
+    className: "block size-full",
+    onContentHeight: setContentHeight,
+  };
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
       <DialogPopup
@@ -57,16 +69,21 @@ export function HtmlRenderDialog(props: {
           >
             <XIcon />
           </Button>
-          <div className="max-h-[min(86vh,calc(100vh-160px))] overflow-y-auto overscroll-contain rounded-lg bg-background p-4 shadow-2xl ring-1 ring-border/70">
+          <div
+            data-html-render-scroll
+            className="max-h-[min(86vh,calc(100vh-160px))] overflow-y-auto overscroll-contain rounded-lg bg-background p-4 shadow-2xl ring-1 ring-border/70"
+          >
             <div ref={measureBox}>
               <div style={{ zoom, height }}>
-                <HtmlRenderDocument
-                  src={props.src}
-                  title={title}
-                  threadRef={props.threadRef}
-                  className="block size-full"
-                  onContentHeight={setContentHeight}
-                />
+                {props.citationSource ? (
+                  <HtmlRenderAnnotatedDocument
+                    {...documentProps}
+                    htmlRender={props.htmlRender}
+                    source={props.citationSource}
+                  />
+                ) : (
+                  <HtmlRenderDocument {...documentProps} />
+                )}
               </div>
             </div>
           </div>

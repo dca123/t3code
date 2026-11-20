@@ -195,6 +195,7 @@ const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 export type ResolvedAsset =
   | {
       readonly kind: "file";
+      readonly annotateHtml?: true;
       readonly path: string;
       readonly download?: boolean;
       readonly fileName?: string;
@@ -231,10 +232,15 @@ function decodeRelativePath(value: string): string | null {
   }
 }
 
-export const readMcpAppHtml = Effect.fn("AssetAccess.readMcpAppHtml")(function* (filePath: string) {
+// Allow space for stored CSP tags, but bound reads if the attachment grows after minting.
+export const readMcpAppHtml = (filePath: string) =>
+  readBoundedHtml(filePath, MCP_APP_MAX_HTML_BYTES + 128 * 1024);
+
+export const readBoundedHtml = Effect.fn("AssetAccess.readBoundedHtml")(function* (
+  filePath: string,
+  limit: number,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
-  // Allow space for stored CSP tags, but bound reads if the attachment grows after minting.
-  const limit = MCP_APP_MAX_HTML_BYTES + 128 * 1024;
   const chunks = yield* Stream.runCollect(fileSystem.stream(filePath, { bytesToRead: limit + 1 }));
   const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
   if (size > limit) return null;
@@ -895,6 +901,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
 export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   token: string,
   relativePath: string,
+  annotateHtml = false,
 ) {
   const [encodedPayload, signature] = token.split(".");
   if (!encodedPayload || !signature) return null;
@@ -936,6 +943,12 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           ...(claims.download ? { download: true } : {}),
           ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
           ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
+          ...(annotateHtml &&
+          !claims.download &&
+          claims.renderIntent === undefined &&
+          parseAttachmentFileExtension(claims.attachmentId) === "html"
+            ? { annotateHtml: true }
+            : {}),
           ...(claims.renderIntent === "mcp-app" ? { renderIntent: "mcp-app" as const } : {}),
         } satisfies ResolvedAsset)
       : null;

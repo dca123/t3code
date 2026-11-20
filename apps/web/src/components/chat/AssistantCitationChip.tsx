@@ -246,29 +246,42 @@ export function AssistantCitationChip({
     if (!commentOpen || sourceAnchor === unavailableSourceAnchor) return;
     const anchor = sourceAnchor ?? findAssistantCitationSourceAnchor(document, citation);
     if (!anchor) return;
+    if (!("range" in anchor)) {
+      const observer = new MutationObserver(() => {
+        if (!anchor.source.isConnected) onSourceUnavailable();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      return () => observer.disconnect();
+    }
     return observeAssistantCitationCommentSource({
       anchor,
       citation,
       onUnavailable: onSourceUnavailable,
     });
   }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
-  const popupAnchor = activeSourceAnchor
-    ? {
-        contextElement: activeSourceAnchor.source,
-        getBoundingClientRect: () => {
-          const rects = activeSourceAnchor.range.getClientRects();
-          const rect =
-            rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
-          // Code blocks and tables scroll sideways inside the message, so the cited
-          // text can end in their hidden overflow. Base UI only shifts the popup while
-          // it still touches the anchor, so clamp the anchor to the message's width.
-          const bounds = activeSourceAnchor.source.getBoundingClientRect();
-          const left = Math.min(Math.max(rect.left, bounds.left), bounds.right);
-          const right = Math.max(Math.min(rect.right, bounds.right), left);
-          return new DOMRect(left, rect.top, right - left, rect.height);
-        },
-      }
-    : undefined;
+  const popupAnchor =
+    activeSourceAnchor && !("range" in activeSourceAnchor)
+      ? {
+          contextElement: activeSourceAnchor.source,
+          getBoundingClientRect: activeSourceAnchor.getBoundingClientRect,
+        }
+      : activeSourceAnchor
+        ? {
+            contextElement: activeSourceAnchor.source,
+            getBoundingClientRect: () => {
+              const rects = activeSourceAnchor.range.getClientRects();
+              const rect =
+                rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
+              // Code blocks and tables scroll sideways inside the message, so the cited
+              // text can end in their hidden overflow. Base UI only shifts the popup while
+              // it still touches the anchor, so clamp the anchor to the message's width.
+              const bounds = activeSourceAnchor.source.getBoundingClientRect();
+              const left = Math.min(Math.max(rect.left, bounds.left), bounds.right);
+              const right = Math.max(Math.min(rect.right, bounds.right), left);
+              return new DOMRect(left, rect.top, right - left, rect.height);
+            },
+          }
+        : undefined;
   const label = assistantCitationLabel(citation);
   const composerSourceLink = (
     <Link
@@ -329,6 +342,11 @@ export function AssistantCitationChip({
             <PopoverPopup
               // The editor stays mounted while its voice setup dialog replaces the popover.
               keepMounted
+              container={
+                activeSourceAnchor && "portal" in activeSourceAnchor
+                  ? (activeSourceAnchor.portal ?? undefined)
+                  : undefined
+              }
               {...composerFloatingLayerProps}
               side={activeSourceAnchor ? "bottom" : "top"}
               // Short quotes near the lane's left edge would push an end-aligned editor over the sidebar.
