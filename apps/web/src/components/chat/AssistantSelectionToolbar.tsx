@@ -14,6 +14,7 @@ import {
   type RefObject,
 } from "react";
 import { MessageSquareIcon } from "lucide-react";
+import { useGT } from "gt-react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -183,6 +184,7 @@ export function AssistantSelectionToolbar({
       element: viewport,
       getActionElement: () => toolbarRef.current,
       restoreAfterScroll: true,
+      immediateMultiClick: true,
       onSelection: update,
       onDismiss: clear,
     });
@@ -249,6 +251,7 @@ export function AssistantSelectionActions({
   portal: HTMLElement;
 }) {
   const backgroundThread = use(BackgroundThreadContext);
+  const gt = useGT();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clamps the toolbar inside the window before paint
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current;
@@ -264,7 +267,7 @@ export function AssistantSelectionActions({
     <div
       ref={toolbarRef}
       role="toolbar"
-      aria-label="Annotate selection"
+      aria-label={gt("Annotate selection")}
       data-assistant-selection-toolbar={backgroundThread ? undefined : "true"}
       className="fixed z-50 flex max-w-[calc(100vw-1rem)] gap-1 rounded-md border border-border bg-popover p-1 shadow-md"
 
@@ -281,17 +284,17 @@ export function AssistantSelectionActions({
         type="button"
         size="xs"
         variant="ghost"
-        aria-label={tooLong ? undefined : "Comment"}
+        aria-label={tooLong ? gt("Selection is too long to cite") : gt("Comment")}
         disabled={tooLong}
         onClick={() => onCite("comment")}
       >
-        {tooLong ? "Shorten selection" : <MessageSquareIcon aria-hidden="true" />}
+        {tooLong ? gt("Shorten selection") : <MessageSquareIcon aria-hidden="true" />}
       </Button>
       <Button
         type="button"
         size="xs"
         variant="ghost"
-        aria-label="Looks good"
+        aria-label={gt("Looks good")}
         disabled={tooLong}
         onClick={() => onCite("preset", "Looks good")}
       >
@@ -301,7 +304,7 @@ export function AssistantSelectionActions({
         type="button"
         size="xs"
         variant="ghost"
-        aria-label="Can you explain this?"
+        aria-label={gt("Can you explain this?")}
         disabled={tooLong}
         onClick={() => onCite("preset", "Can you explain this?")}
       >

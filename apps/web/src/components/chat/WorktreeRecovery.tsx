@@ -4,8 +4,10 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { msg, useGT } from "gt-react";
 import { FolderXIcon } from "lucide-react";
 import { createContext, use, useState } from "react";
+import { m } from "../../i18n/messages";
 import { useServerConfigs } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -27,6 +29,7 @@ export function useWorktreeRecovery(input: {
   blocked: boolean;
   refresh: () => void;
 }) {
+  const gt = useGT();
   const run = useAtomCommand(orchestrationEnvironment.recreateWorktree);
   const permitted = useAtomValue(
     orchestrationEnvironment.recreateWorktree.permissionAtom(input.environmentId),
@@ -53,8 +56,8 @@ export function useWorktreeRecovery(input: {
         const error = squashAtomCommandFailure(result);
         toastManager.add({
           type: "error",
-          title: "Could not recreate worktree",
-          description: error instanceof Error ? error.message : "Try again.",
+          title: gt("Could not recreate worktree"),
+          description: error instanceof Error ? error.message : gt("Try again."),
         });
         return;
       }
@@ -64,16 +67,19 @@ export function useWorktreeRecovery(input: {
         type: setupWarning === null ? "success" : "warning",
         title:
           setupWarning === null
-            ? "Worktree recreated"
-            : "Worktree recreated, but setup could not start",
+            ? gt("Worktree recreated")
+            : gt("Worktree recreated, but setup could not start"),
         description: [
           branchRecovery === "in_use"
-            ? `The old branch is checked out elsewhere. Created ${branch} from the default branch.`
+            ? gt(
+                "The old branch is checked out elsewhere. Created {branch} from the default branch.",
+                { branch },
+              )
             : branchRecovery === "missing" || branchRecovery === "detached"
-              ? `Created ${branch} from the default branch.`
-              : `Checked out ${branch}.`,
+              ? gt("Created {branch} from the default branch.", { branch })
+              : gt("Checked out {branch}.", { branch }),
           setupWarning,
-          "Send your message again to continue.",
+          gt("Send your message again to continue."),
         ]
           .filter(Boolean)
           .join(" "),
@@ -83,6 +89,7 @@ export function useWorktreeRecovery(input: {
 }
 
 export function RecreateWorktreeButton({ path }: { readonly path: string }) {
+  const gt = useGT();
   const recovery = use(WorktreeRecoveryContext);
   if (recovery?.path !== path) return null;
   return (
@@ -93,7 +100,7 @@ export function RecreateWorktreeButton({ path }: { readonly path: string }) {
       disabled={recovery.disabled}
       onClick={() => void recovery.recreate()}
     >
-      {recovery.pending ? "Recreating worktree..." : "Recreate worktree"}
+      {recovery.pending ? gt("Recreating worktree...") : gt("Recreate worktree")}
     </Button>
   );
 }
@@ -103,7 +110,7 @@ export function missingWorktreeBanner(path: string): ComposerBannerStackItem {
     id: "missing-worktree",
     variant: "warning",
     icon: <FolderXIcon aria-hidden />,
-    title: "Worktree folder is missing",
+    title: m(msg("Worktree folder is missing")),
     description: path,
     actions: <RecreateWorktreeButton path={path} />,
   };

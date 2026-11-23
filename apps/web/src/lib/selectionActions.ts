@@ -47,12 +47,19 @@ export function observeSelectionActions({
   element,
   getActionElement,
   restoreAfterScroll = false,
+  immediateMultiClick = false,
   onSelection,
   onDismiss,
 }: {
   element: HTMLElement;
   getActionElement?: () => HTMLElement | null;
   restoreAfterScroll?: boolean;
+  /**
+   * Show double- and triple-click selections at once instead of waiting out the multi-click
+   * interval. Their pointer is withheld so the action anchors below the selection, clear of
+   * the spot where a following click lands.
+   */
+  immediateMultiClick?: boolean;
   /** `extending` is a further click of a double or triple click growing the shown selection. */
   onSelection: (pointer: SelectionActionPoint | null, extending: boolean) => void;
   onDismiss: (reason: "interaction" | "cancel") => void;
@@ -140,8 +147,8 @@ export function observeSelectionActions({
     pointerDown = false;
     if (!gestureActive) return;
     gestureActive = false;
-    pointer = { x: event.clientX, y: event.clientY };
-    schedule(0);
+    pointer = multiClick && immediateMultiClick ? null : { x: event.clientX, y: event.clientY };
+    schedule(multiClick && !immediateMultiClick ? SELECTION_MULTI_CLICK_INTERVAL_MS : 0);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     if (isActionTarget(event.target) && event.key !== "Escape") return;
