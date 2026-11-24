@@ -58,7 +58,9 @@ export function scheduleLabel(
   resolve: MessageResolver = m,
   locale: string = getActiveLocale(),
 ): string {
-  if (schedule.type === "webhook") return resolve(msg("On webhook"));
+  if (schedule.type === "webhook") {
+    return schedule.fireOnce ? resolve(msg("On webhook, once")) : resolve(msg("On webhook"));
+  }
   if (schedule.type === "once") {
     return resolve(
       msg("Once, {time}", { time: formatDateTimeTimestamp(schedule.runAt, timestampFormat) }),
@@ -72,6 +74,7 @@ export function scheduleLabel(
       }),
     );
   }
+
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
@@ -163,6 +166,8 @@ export interface DraftState {
   /** Write-only: empty keeps the secret already stored on the server. */
   readonly signatureSecret: string;
   readonly maxDeliveryAgeMinutes: string;
+  readonly fireOnce: boolean;
+  readonly savedFireOnce: boolean;
   readonly replayKey: string;
   readonly coalesceKey: string;
   readonly coalesceWindowSeconds: string;
@@ -311,6 +316,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
           }
         : null,
       maxDeliveryAgeMinutes,
+      ...(draft.fireOnce !== draft.savedFireOnce ? { fireOnce: draft.fireOnce } : {}),
       ...(replayKey || coalesceKey || coalesceWindowSeconds !== undefined
         ? {
             dedupe: {
@@ -403,6 +409,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       schedule.type === "webhook" && schedule.dedupe?.coalesceWindowSeconds !== undefined
         ? String(schedule.dedupe.coalesceWindowSeconds)
         : "",
+    fireOnce: schedule.type === "webhook" && schedule.fireOnce === true,
+    savedFireOnce: schedule.type === "webhook" && schedule.fireOnce === true,
     maxDeliveryAgeMinutes:
       schedule.type === "webhook" && schedule.maxDeliveryAgeMinutes != null
         ? String(schedule.maxDeliveryAgeMinutes)
