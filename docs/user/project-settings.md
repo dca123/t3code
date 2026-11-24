@@ -102,6 +102,9 @@ a new thread on each run survive deletion of their previous threads.
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
 immediately.
+To handle a single result, such as a test command exiting, turn on **Stop after
+first matching request**. The task turns off once T3 queues the turn. Requests
+that fail validation or do not match the filters don't use it up.
 Leaving an edited form asks before discarding unsaved changes.
 
 ## Webhook automations

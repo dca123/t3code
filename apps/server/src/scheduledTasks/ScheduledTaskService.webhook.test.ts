@@ -1133,6 +1133,52 @@ it.effect("a coalesced window fails its delivery when the task row cannot be rea
   );
 });
 
+it.effect("dispatches only the first matching one-shot webhook after restart", () =>
+  withService(({ service, sql, launches }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(
+        yield* webhookTaskInput({
+          prompt: "Tests exited with {{body.exitCode}}",
+          schedule: {
+            type: "webhook",
+            fireOnce: true,
+            filters: [{ path: "body.run", op: "equals", value: "42" }],
+          },
+        }),
+      );
+      const request = requestFor(task);
+      const result = (run: string, exitCode: number) => {
+        const bodyText = JSON.stringify({ run, exitCode });
+        return { ...request, bodyText, body: Buffer.from(bodyText) };
+      };
+      const filtered = yield* service.triggerWebhook(result("41", 0));
+      assert.equal(filtered._tag === "accepted" && filtered.outcome, "filtered");
+      const first = yield* service.triggerWebhook(result("42", 1));
+      assert.equal(first._tag === "accepted" && first.outcome, "accepted");
+      const repeated = yield* service.triggerWebhook(result("42", 0));
+      assert.equal(repeated._tag === "accepted" && repeated.outcome, "duplicate");
+      assert.equal(yield* Queue.size(launches), 0);
+
+      const workers = new Map<string, Effect.Effect<void>>();
+      yield* withService(
+        ({ launches, service }) =>
+          Effect.gen(function* () {
+            yield* workers.get("webhook-coalescing")!;
+            const launch = yield* Queue.take(launches);
+            assert.include(JSON.stringify(launch), "Tests exited with");
+            yield* workers.get("webhook-coalescing")!;
+            assert.equal(yield* Queue.size(launches), 0);
+            assert.equal(
+              (yield* service.list()).tasks.find((row) => row.id === task.id)?.enabled,
+              false,
+            );
+          }),
+        { sql, workers },
+      );
+    }),
+  ),
+);
+
 it.effect("recovers a persisted coalescing window after restarting the service", () => {
   const workers = new Map<string, Effect.Effect<void>>();
   return withService(

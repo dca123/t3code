@@ -1246,6 +1246,21 @@ function TaskForm({
                 signatureConfigured={draft.schedule.signature !== null}
                 disabled={!canOperate || saving || environmentUnavailable}
               />
+              <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+                <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+                  Stop after first matching request
+                </Text>
+                <ThemedSwitch
+                  accessibilityLabel="Stop after first matching request"
+                  value={draft.schedule.fireOnce}
+                  onValueChange={(fireOnce) =>
+                    setDraft((current) => ({
+                      ...current,
+                      schedule: { ...current.schedule, fireOnce },
+                    }))
+                  }
+                />
+              </View>
               <FormField
                 label="Skip requests older than (minutes)"
                 value={draft.schedule.maxDeliveryAgeMinutes}

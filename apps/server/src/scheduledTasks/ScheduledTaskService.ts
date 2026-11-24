@@ -73,6 +73,7 @@ import {
   releaseWebhookReplay,
   decodePendingTask,
   encodePendingTask,
+  encodePendingRequest,
   decodePendingRequest,
   dedupeError,
 } from "./webhookDedupe.ts";
@@ -788,10 +789,12 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
+      readonly consumeWebhook: boolean;
     }) =>
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
+            enabled = CASE WHEN ${input.consumeWebhook ? 1 : 0} = 1 THEN 0 ELSE enabled END,
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
@@ -996,11 +999,14 @@ export const layer = Layer.effect(
               ? "The task was replaced before this delivery ran."
               : active.schedule.type !== "webhook"
                 ? "The task's trigger changed before this delivery ran."
-                : webhookPolicyBlock !== undefined
-                  ? webhookPolicyBlock
-                  : !active.enabled
-                    ? "The task was paused before this delivery ran."
-                    : null;
+                : Boolean(active.schedule.fireOnce) !==
+                    Boolean(task.schedule.type === "webhook" && task.schedule.fireOnce)
+                  ? "The task's delivery mode changed before this delivery ran."
+                  : webhookPolicyBlock !== undefined
+                    ? webhookPolicyBlock
+                    : !active.enabled
+                      ? "The task was paused before this delivery ran."
+                      : null;
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
@@ -1119,8 +1125,16 @@ export const layer = Layer.effect(
           const [row] = yield* getRows(task.id);
           const current = row === undefined ? null : yield* decodeRow(row, origin);
           const scheduleSource = current ?? task;
+          const consumeWebhook =
+            runSucceeded &&
+            webhook !== undefined &&
+            active.schedule.type === "webhook" &&
+            active.schedule.fireOnce === true &&
+            scheduleSource.schedule.type === "webhook" &&
+            scheduleSource.schedule.fireOnce === true;
           const completed: ScheduledTask = {
             ...scheduleSource,
+            enabled: scheduleSource.enabled && !consumeWebhook,
             updatedAt: iso(completedAt),
             lastRunAt: startedAtIso,
             // A manual run that starts before a one-time run must not use it up.
@@ -1143,6 +1157,7 @@ export const layer = Layer.effect(
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
+            consumeWebhook,
           });
           let written = false;
           if (webhook === undefined) written = yield* completion;
@@ -1459,6 +1474,10 @@ export const layer = Layer.effect(
         input.schedule.type === "webhook"
           ? {
               type: "webhook",
+              ...((input.schedule.fireOnce ??
+              (existingTask?.schedule.type === "webhook" && existingTask.schedule.fireOnce))
+                ? { fireOnce: true }
+                : {}),
               signature:
                 input.schedule.signature == null
                   ? null
@@ -2354,32 +2373,50 @@ export const layer = Layer.effect(
               ),
             );
           const deduped =
-            schedule.dedupe === undefined
-              ? "run"
-              : yield* admit(
+            schedule.fireOnce === true
+              ? yield* admit(
                   Effect.gen(function* () {
-                    const outcome = yield* acceptWebhookDedupe(
-                      task,
-                      request,
-                      deliveryId,
-                      DateTime.toEpochMillis(now),
-                      reserve,
-                      takeDedupeLogSlot(task.id, DateTime.toEpochMillis(now)),
-                      checkCapacity,
-                      (ownerId) => replaceDeliveryRequest(ownerId, request),
-                    ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
-                    if (
-                      outcome === "pending" ||
-                      outcome === "coalesced" ||
-                      (outcome === "duplicate" &&
-                        (yield* takeDedupeLogSlot(task.id, DateTime.toEpochMillis(now))))
-                    )
-                      yield* log(outcome === "pending" ? "accepted" : outcome, {
-                        signatureVerified: signature !== null,
-                      });
-                    return outcome;
+                    const [available] = yield* sql`SELECT 1 FROM scheduled_tasks
+                    WHERE task_id = ${task.id} AND created_at = ${task.createdAt} AND enabled = 1
+                      AND json_extract(schedule_json, '$.fireOnce') = 1
+                      AND NOT EXISTS (SELECT 1 FROM scheduled_task_webhook_pending WHERE task_id = ${task.id})`;
+                    if (available === undefined) return "duplicate" as const;
+                    yield* reserve;
+                    const taskJson = yield* encodePendingTask(task);
+                    const requestJson = yield* encodePendingRequest(request);
+                    yield* sql`INSERT INTO scheduled_task_webhook_pending
+                    (delivery_id, task_id, coalesce_key, due_at, task_json, request_json, delivery_ids_json)
+                    VALUES (${deliveryId}, ${task.id}, '', ${DateTime.toEpochMillis(now)}, ${taskJson}, ${requestJson}, json_array(${deliveryId}))`;
+                    yield* log("accepted", { signatureVerified: signature !== null });
+                    return "pending" as const;
                   }),
-                );
+                )
+              : schedule.dedupe === undefined
+                ? "run"
+                : yield* admit(
+                    Effect.gen(function* () {
+                      const outcome = yield* acceptWebhookDedupe(
+                        task,
+                        request,
+                        deliveryId,
+                        DateTime.toEpochMillis(now),
+                        reserve,
+                        takeDedupeLogSlot(task.id, DateTime.toEpochMillis(now)),
+                        checkCapacity,
+                        (ownerId) => replaceDeliveryRequest(ownerId, request),
+                      ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+                      if (
+                        outcome === "pending" ||
+                        outcome === "coalesced" ||
+                        (outcome === "duplicate" &&
+                          (yield* takeDedupeLogSlot(task.id, DateTime.toEpochMillis(now))))
+                      )
+                        yield* log(outcome === "pending" ? "accepted" : outcome, {
+                          signatureVerified: signature !== null,
+                        });
+                      return outcome;
+                    }),
+                  );
           if (typeof deduped !== "string") {
             yield* refundRejectionSlot;
             if (deduped.log) yield* log("rate_limited");

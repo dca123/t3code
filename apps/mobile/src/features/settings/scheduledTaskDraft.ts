@@ -61,6 +61,8 @@ export type ScheduleDraft = {
   readonly intervalMinutes: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
   readonly maxDeliveryAgeMinutes: string;
+  readonly fireOnce: boolean;
+  readonly savedFireOnce: boolean;
   readonly replayKey: string;
   readonly coalesceKey: string;
   readonly coalesceWindowSeconds: string;
@@ -77,6 +79,8 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   intervalMinutes: "15",
   signature: null,
   maxDeliveryAgeMinutes: "",
+  fireOnce: false,
+  savedFireOnce: false,
   replayKey: "",
   coalesceKey: "",
   coalesceWindowSeconds: "",
@@ -106,6 +110,8 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
       return {
         ...DEFAULT_SCHEDULE,
         mode: "webhook",
+        fireOnce: task.schedule.fireOnce === true,
+        savedFireOnce: task.schedule.fireOnce === true,
         signature: task.schedule.signature,
         replayKey: task.schedule.dedupe?.replayKey ?? "",
         coalesceKey: task.schedule.dedupe?.coalesceKey ?? "",
@@ -158,6 +164,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
               prefix: draft.signature.prefix,
             },
       maxDeliveryAgeMinutes,
+      ...(draft.fireOnce !== draft.savedFireOnce ? { fireOnce: draft.fireOnce } : {}),
       ...(replayKey || coalesceKey || coalesceWindowSeconds !== undefined
         ? {
             dedupe: {
@@ -233,6 +240,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
     draft.schedule.maxDeliveryAgeMinutes,
+    draft.schedule.fireOnce,
     draft.schedule.replayKey,
     draft.schedule.coalesceKey,
     draft.schedule.coalesceWindowSeconds,

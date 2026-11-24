@@ -191,6 +191,8 @@ const EMPTY_DRAFT: DraftState = {
   ...WEBHOOK_SIGNATURE_DEFAULTS,
   signatureSecret: "",
   maxDeliveryAgeMinutes: "",
+  fireOnce: false,
+  savedFireOnce: false,
   replayKey: "",
   coalesceKey: "",
   coalesceWindowSeconds: "",
@@ -1882,9 +1884,21 @@ function ScheduledTaskEditorForm({
                 <WebhookEndpointField environmentId={environmentId} task={liveTask} />
                 <p className="text-xs text-muted-foreground">
                   {
-                    "Each request runs the prompt. Use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} or {{request}} in the prompt; only what it names reaches the agent."
+                    "Use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} or {{request}} in the prompt; only what it names reaches the agent."
                   }
                 </p>
+                <div className="flex items-center justify-between gap-4">
+                  <Label htmlFor="scheduled-task-fire-once">
+                    Stop after first matching request
+                  </Label>
+                  <Switch
+                    id="scheduled-task-fire-once"
+                    checked={draft.fireOnce}
+                    onCheckedChange={(fireOnce) =>
+                      setDraft((current) => ({ ...current, fireOnce }))
+                    }
+                  />
+                </div>
                 <Field
                   label="Skip requests older than"
                   hint="minutes, optional"
