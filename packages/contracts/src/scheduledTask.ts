@@ -191,6 +191,7 @@ const ScheduledTaskWebhookFilters = Schema.Array(ScheduledTaskWebhookFilter)
 
 const ScheduledTaskWebhookSchedule = Schema.Struct({
   type: Schema.Literal("webhook"),
+  fireOnce: Schema.optional(Schema.Boolean),
   signature: Schema.NullOr(ScheduledTaskWebhookSignature),
   maxDeliveryAgeMinutes: Schema.optional(Schema.NullOr(WebhookMaxDeliveryAgeMinutes)),
   dedupe: Schema.optional(ScheduledTaskWebhookDedupe),
@@ -201,6 +202,10 @@ const ScheduledTaskWebhookSchedule = Schema.Struct({
 
 const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
   type: Schema.Literal("webhook"),
+  fireOnce: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Stop after the first matching request queues a turn. Omit to keep the stored setting.",
+  }),
   signature: Schema.optional(
     Schema.NullOr(
       Schema.Struct({

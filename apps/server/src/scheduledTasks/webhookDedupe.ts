@@ -122,7 +122,7 @@ const PendingRequestJson = Schema.fromJsonString(
     bodyText: Schema.String,
   }),
 );
-const encodePendingRequest = Schema.encodeEffect(PendingRequestJson);
+export const encodePendingRequest = Schema.encodeEffect(PendingRequestJson);
 export const decodePendingRequest = Schema.decodeUnknownEffect(PendingRequestJson);
 export const dedupeError = (cause: unknown) =>
   new ScheduledTaskError({ message: "Could not persist webhook dedupe state.", cause });
