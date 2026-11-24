@@ -45,7 +45,7 @@ export function scheduleLabel(
   timeZone?: string,
   runAt?: string | null,
 ): string {
-  if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "webhook") return schedule.fireOnce ? "On webhook, once" : "On webhook";
   if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
@@ -124,6 +124,8 @@ export interface DraftState {
   /** Write-only: empty keeps the secret already stored on the server. */
   readonly signatureSecret: string;
   readonly maxDeliveryAgeMinutes: string;
+  readonly fireOnce: boolean;
+  readonly savedFireOnce: boolean;
   readonly replayKey: string;
   readonly coalesceKey: string;
   readonly coalesceWindowSeconds: string;
@@ -246,6 +248,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
           }
         : null,
       maxDeliveryAgeMinutes,
+      ...(draft.fireOnce !== draft.savedFireOnce ? { fireOnce: draft.fireOnce } : {}),
       ...(replayKey || coalesceKey || coalesceWindowSeconds !== undefined
         ? {
             dedupe: {
@@ -325,6 +328,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       schedule.type === "webhook" && schedule.dedupe?.coalesceWindowSeconds !== undefined
         ? String(schedule.dedupe.coalesceWindowSeconds)
         : "",
+    fireOnce: schedule.type === "webhook" && schedule.fireOnce === true,
+    savedFireOnce: schedule.type === "webhook" && schedule.fireOnce === true,
     maxDeliveryAgeMinutes:
       schedule.type === "webhook" && schedule.maxDeliveryAgeMinutes != null
         ? String(schedule.maxDeliveryAgeMinutes)
