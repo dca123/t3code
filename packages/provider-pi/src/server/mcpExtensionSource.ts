@@ -10,12 +10,14 @@ export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
+export const PI_T3_COMMAND_WAIT_WIDGET = "t3-command-wait";
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -30,6 +32,7 @@ const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const PULL_REQUEST_LINKING_INSTRUCTIONS = ${JSON.stringify(PULL_REQUEST_LINKING_INSTRUCTIONS)};
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
+const COMMAND_WAIT_WIDGET = ${JSON.stringify(PI_T3_COMMAND_WAIT_WIDGET)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -396,6 +399,57 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     });
     return;
   }
+
+  const commands = new Map<string, AbortController>();
+  pi.on("session_shutdown", () => {
+    for (const command of commands.values()) command.abort();
+    commands.clear();
+  });
+  pi.registerTool({
+    name: "t3_run_and_wait",
+    label: "Run and wait",
+    description: "Start a finite local command in the background. End your turn or do other work; T3 starts a follow-up turn with its exit result. Do not use for dev servers or other persistent commands.",
+    parameters: Type.Unsafe<{ command: string; args: string[]; title: string }>({
+      type: "object",
+      required: ["command", "args", "title"],
+      properties: {
+        command: { type: "string", minLength: 1, maxLength: 512 },
+        args: { type: "array", maxItems: 128, items: { type: "string" } },
+        title: { type: "string", minLength: 1, maxLength: 120 },
+      },
+    }),
+    async execute(_toolCallId, { command, args, title }, signal, _onUpdate, ctx) {
+      if (signal?.aborted) throw new Error("Command launch was cancelled.");
+      if (commands.size >= 8) throw new Error("This session already has eight awaited commands.");
+      const id = NodeCrypto.randomUUID();
+      const controller = new AbortController();
+      const publish = (event: object) => ctx.ui.setWidget(COMMAND_WAIT_WIDGET, [JSON.stringify(event)]);
+      commands.set(id, controller);
+      publish({ id, title, status: "running" });
+      void (async () => {
+        let exitCode: number | null = null;
+        let output = "";
+        try {
+          const result = await new Promise<{ exitCode: number | null; output: string }>((resolve) => {
+            NodeChildProcess.execFile(command, args, { cwd: ctx.cwd, signal: controller.signal, timeout: 60 * 60_000, maxBuffer: 16 * 1024 * 1024, killSignal: "SIGKILL" }, (error, stdout, stderr) => {
+              resolve({
+                exitCode: error === null ? 0 : typeof error.code === "number" && !error.killed ? error.code : null,
+                output: [error?.signal ? "Terminated by " + error.signal : error && typeof error.code !== "number" ? error.message : "", stdout, stderr].filter(Boolean).join("\\n").slice(-4_000),
+              });
+            });
+          });
+          exitCode = result.exitCode;
+          output = result.output;
+        } catch (error) {
+          output = String(error).slice(0, 4_000);
+        } finally {
+          commands.delete(id);
+        }
+        if (!controller.signal.aborted) publish({ id, status: "finished", exitCode, output });
+      })();
+      return { content: [{ type: "text", text: "Waiting for " + title + " (" + id + "). T3 will deliver the result." }], details: { id } };
+    },
+  });
 
   // Tool exposure arrived with registerMcpServer in Pi 0.99. Keep the HTTP
   // bridge as the credential owner: mcp.json overrides native registrations.

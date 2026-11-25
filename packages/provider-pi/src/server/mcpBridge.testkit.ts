@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Executes the shipped Pi extension at its native JavaScript boundary.
 import * as NodeCrypto from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
@@ -23,6 +24,11 @@ interface RegisteredTool {
     id: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    onUpdate?: undefined,
+    ctx?: {
+      readonly cwd: string;
+      readonly ui: { setWidget: (key: string, lines: string[]) => void };
+    },
   ) => Promise<{
     readonly content: ReadonlyArray<{
       readonly type: string;
@@ -110,6 +116,8 @@ export async function loadMcpBridge(
       },
     },
     AbortSignal,
+    AbortController,
+    NodeChildProcess,
     NodeCrypto,
     NodePath,
     Type: { Unsafe: (schema: unknown) => schema },
@@ -142,6 +150,7 @@ export async function loadMcpBridge(
     pi: {
       on: (name: string, handler: AgentStartHook) => handlers.set(name, handler),
       registerCommand: () => {},
+
       registerTool: (tool: RegisteredTool) => {
         if (options.allowsTool && !options.allowsTool(tool.name)) return;
         const index = tools.findIndex((current) => current.name === tool.name);
@@ -205,7 +214,9 @@ export async function loadMcpBridge(
   };
   return {
     handlers,
-    tools,
+    get tools() {
+      return tools.filter((tool) => tool.name.startsWith("mcp__"));
+    },
     declaredTools,
     callableTools: () => callableTools().map((tool) => tool.name),
     callModelTool: async (name: string, args: Record<string, unknown>) => {
@@ -214,6 +225,9 @@ export async function loadMcpBridge(
         return { content: [{ type: "text", text: `Tool ${name} not found` }], isError: true };
       }
       return tool.execute("model-call", args);
+    },
+    get commandTool() {
+      return tools.find((tool) => tool.name === "t3_run_and_wait");
     },
     setBridgeSourcePath: (path: string) => {
       bridgeSourcePath = path;

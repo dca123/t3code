@@ -2074,7 +2074,6 @@ function ScheduledTaskEditorForm({
                       request: "{{request}}",
                     },
                   )}
-
                 </p>
                 <div className="flex items-center justify-between gap-4">
                   <Label htmlFor="scheduled-task-fire-once">

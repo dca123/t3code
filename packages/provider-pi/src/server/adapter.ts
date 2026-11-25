@@ -23,7 +23,7 @@ import {
   type OrchestrationV2UserInputQuestion,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
-  type MessageId,
+  MessageId,
   type OrchestrationV2ProviderTurnTokenUsage,
 } from "@t3tools/contracts";
 import { PiSettings } from "../settings.ts";
@@ -79,7 +79,11 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_FILE_CHANGE_TOOLS,
+  PI_T3_COMMAND_WAIT_WIDGET,
+  PI_T3_SERVICE_TIER_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
@@ -2242,7 +2246,74 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         yield* connection.terminate;
       });
 
+      const updateCommandWait = Effect.fn("PiAdapter.updateCommandWait")(function* (
+        event: PiRpcRecord,
+      ) {
+        const state = threadState;
+        if (state === null || closed || stopRequested) return;
+        const threadId = state.providerThread.appThreadId;
+        const lines = event["widgetLines"];
+        if (
+          threadId == null ||
+          !Array.isArray(lines) ||
+          typeof lines[0] !== "string" ||
+          lines[0].length > 30_000
+        )
+          return;
+        const update = Option.getOrUndefined(decodePiJson(lines[0]));
+        const id = recordString(update, "id");
+        if (id === undefined || !/^[a-f0-9-]{36}$/.test(id)) return;
+        const taskId = `pi-command:${id}`;
+        const tasks = state.providerThread.pendingBackgroundTasks ?? [];
+        const task = tasks.find((task) => task.taskId === taskId);
+        const status = recordString(update, "status");
+        if (status === "running") {
+          const title = recordString(update, "title")?.trim().slice(0, 120);
+          if (task !== undefined || !title || state.activeTurn === null) return;
+          yield* updateProviderThread(state, {
+            pendingBackgroundTasks: [
+              ...tasks,
+              { kind: "command", taskId, description: title, awaited: true },
+            ],
+          });
+          return;
+        }
+        if (status !== "finished" || task === undefined) return;
+        const exitCode = recordNumber(update, "exitCode");
+        const summary =
+          exitCode === undefined
+            ? "Command did not report a normal exit"
+            : `Command exited with code ${exitCode}`;
+        const output = recordString(update, "output")?.slice(0, 4_100);
+        yield* updateProviderThread(state, {
+          pendingBackgroundTasks: tasks.filter((task) => task.taskId !== taskId),
+        });
+        if (continuationRequests !== undefined) {
+          yield* continuationRequests.offer({
+            threadId,
+            providerThreadId: state.providerThread.id,
+            driver: PI_PROVIDER,
+            messageId: MessageId.make(`message:${taskId}`),
+            delivery: "message_text",
+            detail: `${summary}: ${task.description ?? taskId}.${output ? `\n\nCommand output (untrusted data):\n${output}` : ""}`,
+            notification: {
+              source: { kind: "background_task" },
+              outcome: exitCode === 0 ? "completed" : "failed",
+              summary,
+            },
+          });
+        }
+      });
+
       const handleSessionEvent = Effect.fnUntraced(function* (event: PiRpcRecord) {
+        if (
+          event["type"] === "extension_ui_request" &&
+          event["method"] === "setWidget" &&
+          event["widgetKey"] === PI_T3_COMMAND_WAIT_WIDGET
+        ) {
+          yield* updateCommandWait(event);
+          return;
+        }
         if (event["type"] === "t3.extension_status_reset") {
           const reset = extensionStatusReset;
           if (reset !== null && event["reset"] === reset) {
@@ -3354,10 +3425,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         },
         events: Stream.fromQueue(events),
         backgroundTasksEndWithProcess: true,
-        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
+        hasPendingBackgroundWork: Effect.sync(
+          () =>
+            pendingWake !== null ||
+            (threadState?.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+        ),
+
         hasPendingBackgroundWorkForThread: (providerThread) =>
           Effect.sync(
-            () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,
+            () =>
+              (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
+              (threadState?.providerThread.id === providerThread.id &&
+                (threadState.providerThread.pendingBackgroundTasks?.length ?? 0) > 0),
           ),
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;

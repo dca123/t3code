@@ -10,6 +10,48 @@ import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server
 import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
+it.each([
+  {
+    script: 'process.stdout.write("fixture"); process.exitCode = 1',
+    exitCode: 1,
+    output: "fixture",
+  },
+  {
+    script: 'process.kill(process.pid, "SIGTERM")',
+    exitCode: null,
+    output: "Terminated by SIGTERM",
+  },
+])("returns before a Pi command exits with $exitCode", async ({ script, exitCode, output }) => {
+  const terminal = Promise.withResolvers<unknown>();
+  const bridge = await loadMcpBridge();
+  const tool = bridge.commandTool;
+  assert.isDefined(tool);
+  const started: unknown[] = [];
+  await tool.execute(
+    "call",
+    { command: process.execPath, args: ["-e", script], title: "tests" },
+    undefined,
+    undefined,
+    {
+      cwd: process.cwd(),
+      ui: {
+        setWidget: (_key, lines) => {
+          const event = JSON.parse(lines[0]!);
+          if (event.status === "finished") terminal.resolve(event);
+          else started.push(event);
+        },
+      },
+    },
+  );
+  assert.lengthOf(started, 1);
+  assert.deepInclude(started[0] as object, { status: "running", title: "tests" });
+  assert.deepInclude((await terminal.promise) as object, {
+    status: "finished",
+    exitCode,
+    output,
+  });
+});
+
 type RequestHook = (
   event: { payload: unknown },
   ctx: { model: { provider: string; serviceTiers?: ReadonlyArray<{ id: string }> } },
@@ -208,11 +250,12 @@ describe("Pi MCP tool exposure", () => {
     ];
     assert.sameMembers(bridge.getActiveTools(), [
       "read",
+      "t3_run_and_wait",
       "tool_search",
       ...publicDirect,
       ...aliases,
     ]);
-    assert.deepEqual(bridge.declaredTools(), publicDirect);
+    assert.sameMembers(bridge.declaredTools(), ["t3_run_and_wait", ...publicDirect]);
     assert.deepEqual(
       bridge.tools
         .filter((tool) => tool.name.startsWith("mcp__t3-code__"))
