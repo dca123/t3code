@@ -768,7 +768,9 @@ function TaskForm({
     automaticBaseRefs.error === null;
   const config = useEnvironmentServerConfig(environmentId);
   const destinationLabel = useScheduledTaskDestinationLabel(environmentId, draft.threadId);
-  const shownSelection = draft.modelSelection;
+  const boundThread = useScheduledTaskThread(environmentId, draft.threadId);
+  const shownSelection =
+    draft.threadId === null ? draft.modelSelection : (boundThread?.modelSelection ?? null);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
   // Existing webhook tasks keep the option so they can still switch to a timer.
   const webhookDenial = managedCapabilityDenial(config?.managedPolicy, "webhookTasks", m);
@@ -1034,23 +1036,23 @@ function TaskForm({
               });
             }}
           />
-          {draft.threadId === null ? (
-            <PickerRow
-              label={gt("Model")}
-              borderTop
-              value={
-                modelOptions.find(
-                  (option) =>
-                    option.selection.instanceId === shownSelection?.instanceId &&
-                    option.selection.model === shownSelection?.model,
-                )?.label ??
-                shownSelection?.model ??
-                (modelOptions.length ? gt("Choose model") : gt("No models available"))
-              }
-              onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
-              disabled={saving || dictationPending || environmentUnavailable}
-            />
-          ) : null}
+          <PickerRow
+            label={gt("Model")}
+            borderTop
+            value={
+              modelOptions.find(
+                (option) =>
+                  option.selection.instanceId === shownSelection?.instanceId &&
+                  option.selection.model === shownSelection?.model,
+              )?.label ??
+              shownSelection?.model ??
+              (modelOptions.length ? gt("Choose model") : gt("No models available"))
+            }
+            onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
+            disabled={
+              saving || dictationPending || environmentUnavailable || draft.threadId !== null
+            }
+          />
         </SettingsSection>
 
         <SettingsSection

@@ -128,12 +128,25 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
       yield* sql`INSERT INTO orchestration_v2_projection_context_transfers
         (context_transfer_id, source_thread_id, target_thread_id, type, status, updated_at, payload_json)
         VALUES ('transfer-1', 'archived-thread', 'stopped-thread', 'provider_handoff', 'completed', '2026-08-01', '{}')`;
-      yield* sql`INSERT INTO scheduled_tasks
-        (task_id, title, prompt, enabled, schedule_json, project_id, destination_json,
-          runtime_mode, interaction_mode, created_by, creation_source,
-          created_at, updated_at, last_run_status, run_count)
-        VALUES ('task-1', 'Nightly', 'Run it', 1, '{}', 'project-kept', '{}',
-          'full-access', 'default', 'user', 'user', '2026-08-01', '2026-08-01', 'never', 0)`;
+      yield* sql`INSERT INTO scheduled_tasks ${sql.insert({
+        task_id: "task-1",
+        title: "Nightly",
+        prompt: "Run it",
+        enabled: 1,
+        schedule_json: "{}",
+        project_id: "project-kept",
+        ...(toMigrationInclusive === undefined
+          ? { destination_json: "{}" }
+          : { workspace_strategy_json: "{}", model_selection_json: "{}" }),
+        runtime_mode: "full-access",
+        interaction_mode: "default",
+        created_by: "user",
+        creation_source: "user",
+        created_at: "2026-08-01",
+        updated_at: "2026-08-01",
+        last_run_status: "never",
+        run_count: 0,
+      })}`;
       yield* sql`INSERT INTO scheduled_task_webhook_replay_keys
         (task_id, replay_key, delivery_id, expires_at)
         VALUES ('task-1', 'replay-1', 'delivery-1', 1900000000000)`;

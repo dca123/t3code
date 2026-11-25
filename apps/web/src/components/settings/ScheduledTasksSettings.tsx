@@ -1577,8 +1577,17 @@ function ScheduledTaskEditorForm({
       : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
-  const shownInstanceId = activeInstanceId;
-  const shownModel = activeSelection?.model ?? "";
+  const activeModel = activeSelection?.model ?? "";
+  const boundThread = useScheduledTaskThread(
+    environmentId,
+    draft.threadId ? (draft.threadId as ThreadId) : null,
+  );
+  // Bound runs use the thread's current model, so the locked picker shows that one.
+  const shownSelection = draft.threadId
+    ? (boundThread?.modelSelection ?? null)
+    : { instanceId: activeInstanceId, model: activeModel };
+  const shownInstanceId = shownSelection?.instanceId ?? activeInstanceId;
+  const shownModel = shownSelection?.model ?? "";
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -1972,26 +1981,24 @@ function ScheduledTaskEditorForm({
             />
           </Field>
 
-          {!draft.threadId ? (
-            <Field label={gt("Model")}>
-              <div>
-                <ProviderModelPicker
-                  environmentId={environmentId}
-                  disabled={saving || !connected}
-                  activeInstanceId={shownInstanceId}
-                  model={shownModel}
-                  lockedProvider={null}
-                  instanceEntries={instanceEntries}
-                  modelOptionsByInstance={modelOptionsByInstance}
-                  isComposerOwned={false}
-                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  onInstanceModelChange={(instanceId, model) =>
-                    setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                  }
-                />
-              </div>
-            </Field>
-          ) : null}
+          <Field label={gt("Model")}>
+            <div>
+              <ProviderModelPicker
+                environmentId={environmentId}
+                disabled={saving || !connected || draft.threadId !== ""}
+                activeInstanceId={shownInstanceId}
+                model={shownModel}
+                lockedProvider={null}
+                instanceEntries={instanceEntries}
+                modelOptionsByInstance={modelOptionsByInstance}
+                isComposerOwned={false}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                onInstanceModelChange={(instanceId, model) =>
+                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                }
+              />
+            </div>
+          </Field>
 
           <div className="space-y-3">
             {task?.schedule.type === "interval" &&
