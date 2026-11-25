@@ -63,9 +63,8 @@ const insertRow = (
     enabled: row.enabled,
     schedule_json: row.scheduleJson ?? '{"type":"interval","everyMs":60000}',
     project_id: "project:test",
-    thread_id: null,
-    workspace_strategy_json: '{"type":"root"}',
-    model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
+    destination_json:
+      '{"type":"new_thread","projectId":"project:test","workspaceStrategy":{"type":"root"},"modelSelection":{"instanceId":"codex","model":"gpt-5"}}',
     runtime_mode: "full-access",
     interaction_mode: "default",
     created_by: "user",
@@ -390,9 +389,7 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: ProjectId.make("project:test"),
-        threadId,
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        destination: { type: "existing_thread", threadId, session: "continue" },
         runtimeMode: "full-access",
         interactionMode: "default",
       });
@@ -489,9 +486,11 @@ it.effect.each([
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId,
-        threadId: ThreadId.make("thread:quota"),
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        destination: {
+          type: "existing_thread",
+          threadId: ThreadId.make("thread:quota"),
+          session: "continue",
+        },
         runtimeMode: "full-access",
         interactionMode: "default",
       });
@@ -560,9 +559,11 @@ it.effect("a one-time task is removed once its turn completes", () =>
         enabled: true,
         schedule: { type: "once", runAt: "2026-11-01T07:01:00.000Z" },
         projectId,
-        threadId: ThreadId.make("thread:once"),
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        destination: {
+          type: "existing_thread",
+          threadId: ThreadId.make("thread:once"),
+          session: "continue",
+        },
         runtimeMode: "full-access",
         interactionMode: "default",
       });
@@ -633,9 +634,11 @@ it.effect("a paused one-time task run by hand before its time is kept", () =>
         enabled: true,
         schedule: { type: "once", runAt: "2026-11-01T08:00:00.000Z" },
         projectId,
-        threadId: ThreadId.make("thread:once"),
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        destination: {
+          type: "existing_thread",
+          threadId: ThreadId.make("thread:once"),
+          session: "continue",
+        },
         runtimeMode: "full-access",
         interactionMode: "default",
       });
@@ -706,9 +709,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: promoted,
-        threadId,
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        destination: { type: "existing_thread", threadId, session: "continue" },
         runtimeMode: "full-access",
         interactionMode: "default",
       });
@@ -776,50 +777,30 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: ProjectId.make("project:test"),
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        destination: {
+          type: "new_thread",
+          projectId: ProjectId.make("project:test"),
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        },
         runtimeMode: "full-access",
         interactionMode: "default",
       } as const;
-      yield* service.upsert({ ...input, threadMode: "fresh_session" });
-
-      assert.equal((yield* service.runNow({ id: input.id })).threadId, launched);
-      // A form opened before the first run saves no thread; the binding stays.
-      const { task } = yield* service.upsert({
+      yield* service.upsert({
         ...input,
-        threadId: null,
-        threadMode: "fresh_session",
+        destination: { ...input.destination, afterLaunch: "fresh_session" },
       });
-      assert.equal(task.threadId, launched);
-      assert.equal(task.threadMode, "fresh_session");
-      // A client that predates thread modes sends neither; both stay.
-      const legacy = yield* service.upsert({ ...input, threadId: null });
-      assert.equal(legacy.task.threadId, launched);
-      assert.equal(legacy.task.threadMode, "fresh_session");
+      assert.equal((yield* service.runNow({ id: input.id })).threadId, launched);
+      const { destination: _, ...edit } = input;
+      const { task } = yield* service.upsert({ ...edit, title: "Renamed after the first run" });
+      assert.deepEqual(task.destination, {
+        type: "existing_thread",
+        threadId: launched,
+        session: "fresh_session",
+      });
       yield* service.runNow({ id: input.id });
-
       assert.equal(yield* Ref.get(launches), 1);
       assert.deepEqual(yield* Ref.get(sends), [{ threadId: launched, freshContext: true }]);
-      // Its thread stays in the old project, so moving the task leaves it for a new one.
-      const moved = yield* service.upsert({
-        ...input,
-        projectId: ProjectId.make("project:moved"),
-        threadId: launched,
-      });
-      assert.equal(moved.task.threadId, null);
-      assert.equal(moved.task.threadMode, "fresh_session");
-      const unbound = yield* service.upsert({ ...input, threadMode: "new_thread" });
-      assert.equal(unbound.task.threadId, null);
-      // Clearing the thread keeps the mode, so the next run starts a thread for later runs.
-      yield* service.upsert({ ...input, threadId: launched, threadMode: "continue" });
-      const cleared = yield* service.upsert({
-        ...input,
-        threadId: null,
-        unbindThread: true,
-        threadMode: "continue",
-      });
-      assert.equal(cleared.task.threadId, null);
-      assert.equal(cleared.task.threadMode, "continue");
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -869,9 +850,11 @@ it.effect("a refused dispatch records its refusal, and opaque causes stay generi
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: ProjectId.make("project:test"),
-        threadId: ThreadId.make("thread:refused"),
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        destination: {
+          type: "existing_thread",
+          threadId: ThreadId.make("thread:refused"),
+          session: "continue",
+        },
         runtimeMode: "full-access",
         interactionMode: "default",
       });
@@ -922,9 +905,13 @@ it.effect("a first run whose thread was deleted before it bound removes the task
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: ProjectId.make("project:test"),
-        threadMode: "continue",
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        destination: {
+          type: "new_thread",
+          projectId: ProjectId.make("project:test"),
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          afterLaunch: "continue",
+        },
         runtimeMode: "full-access",
         interactionMode: "default",
       });
@@ -974,9 +961,13 @@ it.effect.each(["recreated under the same id", "moved to another project"] as co
           enabled: true,
           schedule: { type: "interval", everyMs: 60_000 },
           projectId: ProjectId.make("project:test"),
-          threadMode: "fresh_session",
-          workspaceStrategy: { type: "root" },
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          destination: {
+            type: "new_thread",
+            projectId: ProjectId.make("project:test"),
+            workspaceStrategy: { type: "root" },
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            afterLaunch: "fresh_session",
+          },
           runtimeMode: "full-access",
           interactionMode: "default",
         } as const;
@@ -988,13 +979,18 @@ it.effect.each(["recreated under the same id", "moved to another project"] as co
           yield* TestClock.adjust("1 second");
           yield* service.upsert(input);
         } else {
-          yield* service.upsert({ ...input, projectId: ProjectId.make("project:moved") });
+          const projectId = ProjectId.make("project:moved");
+          yield* service.upsert({
+            ...input,
+            projectId,
+            destination: { ...input.destination, projectId },
+          });
         }
         yield* Deferred.succeed(proceed, undefined);
         yield* Fiber.await(run);
 
         const replacement = (yield* service.list()).tasks.find((task) => task.id === input.id);
-        assert.equal(replacement?.threadId, null);
+        assert.equal(replacement?.destination.type, "new_thread");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -1033,8 +1029,12 @@ it.effect("refuses saving an enabled task above the policy ceiling", () =>
           enabled,
           schedule: { type: "interval", everyMs: 60_000 },
           projectId: ProjectId.make("project:test"),
-          workspaceStrategy: { type: "root" },
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          destination: {
+            type: "new_thread",
+            projectId: ProjectId.make("project:test"),
+            workspaceStrategy: { type: "root" },
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          },
           runtimeMode: "full-access",
           interactionMode: "default",
         });
@@ -1057,14 +1057,26 @@ it.effect("refuses saving an enabled task above the policy ceiling", () =>
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: ProjectId.make("project:test"),
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        destination: {
+          type: "new_thread",
+          projectId: ProjectId.make("project:test"),
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        },
         runtimeMode: "full-access",
         interactionMode: "default",
       } as const;
-      yield* service.upsert({ ...bound, threadId: ThreadId.make("thread:bound") });
+      yield* service.upsert({
+        ...bound,
+        destination: {
+          type: "existing_thread",
+          threadId: ThreadId.make("thread:bound"),
+          session: "continue",
+        },
+      });
       // Nor when an edit omits the thread it stays bound to.
-      yield* service.upsert(bound);
+      const { destination: _, ...edit } = bound;
+      yield* service.upsert(edit);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -1119,9 +1131,7 @@ it.effect("checks a task's destination thread only when the destination changes"
           enabled: true,
           schedule,
           projectId: project,
-          threadId,
-          workspaceStrategy: { type: "root" },
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          destination: { type: "existing_thread", threadId, session: "continue" },
           runtimeMode: "full-access",
           interactionMode: "default",
         });
@@ -1154,7 +1164,11 @@ it.effect("checks a task's destination thread only when the destination changes"
       yield* Ref.update(shells, (all) =>
         new Map(all).set(destination, threadShell(project, { archivedAt })),
       );
-      assert.equal((yield* save(destination)).task.threadId, destination);
+      assert.deepEqual((yield* save(destination)).task.destination, {
+        type: "existing_thread",
+        threadId: destination,
+        session: "continue",
+      });
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -1192,8 +1206,12 @@ it.effect("a run interrupted right after it reserves the task does not block the
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: ProjectId.make("project:test"),
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        destination: {
+          type: "new_thread",
+          projectId: ProjectId.make("project:test"),
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        },
         runtimeMode: "full-access",
         interactionMode: "default",
       });

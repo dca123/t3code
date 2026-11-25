@@ -22,10 +22,11 @@ import {
   type ScheduledTaskRunNowInput,
   type ScheduledTaskRunNowResult,
   type ScheduledTaskSetEnabledInput,
-  type ScheduledTaskThreadMode,
+  ScheduledTaskDestination,
   type ScheduledTaskUpsertInput,
+  type ScheduledTaskRpcUpsertInput,
+  type ScheduledTaskRpcData,
   managedPolicyDeniedMessage,
-  scheduledTaskThreadMode,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -193,31 +194,15 @@ const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
 const decodeScheduleJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.schedule),
 );
-const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(ScheduledTask.fields.workspaceStrategy),
-);
-const decodeModelSelectionJson = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(ScheduledTask.fields.modelSelection),
-);
+const DestinationJson = Schema.fromJsonString(ScheduledTaskDestination);
+const decodeDestinationJson = Schema.decodeUnknownEffect(DestinationJson);
+const encodeDestinationJson = Schema.encodeSync(DestinationJson);
 const HeadersJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const MissingFieldsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeHeadersJson = Schema.decodeUnknownOption(HeadersJson);
 const decodeMissingFieldsJson = Schema.decodeUnknownOption(MissingFieldsJson);
 const encodeHeadersJson = Schema.encodeSync(HeadersJson);
 const encodeMissingFieldsJson = Schema.encodeSync(MissingFieldsJson);
-
-/**
- * Clients that predate thread modes send none, and may send a thread loaded before the first run
- * bound one. An edit keeps the stored mode; binding a thread to a new-thread task continues it.
- */
-function resolveThreadMode(
-  input: Pick<ScheduledTaskUpsertInput, "threadId" | "threadMode">,
-  existing: Pick<ScheduledTask, "threadId" | "threadMode"> | null,
-): ScheduledTaskThreadMode {
-  if (input.threadMode !== undefined) return input.threadMode;
-  const stored = existing === null ? "new_thread" : scheduledTaskThreadMode(existing);
-  return stored === "new_thread" && input.threadId != null ? "continue" : stored;
-}
 
 interface ScheduledTaskRow {
   readonly task_id: string;
@@ -226,10 +211,7 @@ interface ScheduledTaskRow {
   readonly enabled: number;
   readonly schedule_json: string;
   readonly project_id: string;
-  readonly thread_id: string | null;
-  readonly thread_mode: string;
-  readonly workspace_strategy_json: string;
-  readonly model_selection_json: string;
+  readonly destination_json: string;
   readonly runtime_mode: string;
   readonly interaction_mode: string;
   readonly created_by: string;
@@ -271,6 +253,10 @@ export class ScheduledTaskService extends Context.Service<
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
+    readonly upsertFromClient: (
+      input: ScheduledTaskRpcUpsertInput,
+    ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
+    readonly toSettingsRpc: (task: ScheduledTask) => Effect.Effect<ScheduledTaskRpcData>;
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
@@ -408,8 +394,7 @@ const decodeRow = Effect.fnUntraced(
   function* (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) {
     const schedule = yield* decodeScheduleJson(row.schedule_json);
     const webhook = schedule.type === "webhook" ? webhookEndpoint(row, origin) : undefined;
-    const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
-    const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
+    const destination = yield* decodeDestinationJson(row.destination_json);
     return yield* decodeTask({
       id: row.task_id,
       title: row.title,
@@ -417,10 +402,7 @@ const decodeRow = Effect.fnUntraced(
       enabled: row.enabled === 1,
       schedule,
       projectId: row.project_id,
-      threadId: row.thread_id,
-      threadMode: row.thread_mode,
-      workspaceStrategy,
-      modelSelection,
+      destination,
       runtimeMode: row.runtime_mode,
       interactionMode: row.interaction_mode,
       createdBy: row.created_by,
@@ -541,10 +523,7 @@ export const layer = Layer.effect(
         enabled,
         schedule_json,
         project_id,
-        thread_id,
-        thread_mode,
-        workspace_strategy_json,
-        model_selection_json,
+        destination_json,
         runtime_mode,
         interaction_mode,
         created_by,
@@ -583,10 +562,7 @@ export const layer = Layer.effect(
         enabled,
         schedule_json,
         project_id,
-        thread_id,
-        thread_mode,
-        workspace_strategy_json,
-        model_selection_json,
+        destination_json,
         runtime_mode,
         interaction_mode,
         created_by,
@@ -647,8 +623,7 @@ export const layer = Layer.effect(
       requireExisting: boolean,
       /** The schedule this save read, when it left the schedule unchanged. */
       keptSchedule: ScheduledTask["schedule"] | null,
-      /** The thread this save unbinds; any other stored thread is kept. */
-      unboundThreadId: ThreadId | null,
+      keepDestination: boolean,
       webhook: {
         readonly token: string | null;
         readonly secret: string | null;
@@ -663,10 +638,7 @@ export const layer = Layer.effect(
           enabled,
           schedule_json,
           project_id,
-          thread_id,
-          thread_mode,
-          workspace_strategy_json,
-          model_selection_json,
+          destination_json,
           runtime_mode,
           interaction_mode,
           created_by,
@@ -688,10 +660,7 @@ export const layer = Layer.effect(
           ${task.enabled ? 1 : 0},
           ${JSON.stringify(task.schedule)},
           ${task.projectId},
-          ${task.threadId},
-          ${scheduledTaskThreadMode(task)},
-          ${JSON.stringify(task.workspaceStrategy)},
-          ${JSON.stringify(task.modelSelection)},
+          ${encodeDestinationJson(task.destination)},
           ${task.runtimeMode},
           ${task.interactionMode},
           ${task.createdBy},
@@ -714,16 +683,10 @@ export const layer = Layer.effect(
           enabled = excluded.enabled,
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
-          -- A first run may bind the thread while this save is in flight, so a save
-          -- without a thread keeps any thread but the one it unbinds.
-          thread_id = CASE
-            WHEN excluded.thread_mode = 'new_thread' THEN NULL
-            WHEN excluded.project_id != scheduled_tasks.project_id THEN excluded.thread_id
-            ELSE COALESCE(excluded.thread_id, NULLIF(scheduled_tasks.thread_id, ${unboundThreadId}))
+          destination_json = CASE
+            WHEN ${keepDestination ? 1 : 0} = 1 THEN scheduled_tasks.destination_json
+            ELSE excluded.destination_json
           END,
-          thread_mode = excluded.thread_mode,
-          workspace_strategy_json = excluded.workspace_strategy_json,
-          model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
           creation_source = excluded.creation_source,
@@ -892,11 +855,15 @@ export const layer = Layer.effect(
     // cleanup here; a later deletion finds the binding. An unconfirmed lookup keeps the binding.
     const bindThread = Effect.fn("ScheduledTaskService.bindThread")(
       function* (task: ScheduledTask, threadId: ThreadId) {
+        const destination = task.destination;
+        if (destination.type !== "new_thread" || destination.afterLaunch === undefined) return;
         yield* sql`
-          UPDATE scheduled_tasks SET thread_id = ${threadId}
+          UPDATE scheduled_tasks SET destination_json = json_object(
+            'type', 'existing_thread', 'threadId', ${threadId}, 'session', ${destination.afterLaunch}
+          )
           WHERE task_id = ${task.id} AND created_at = ${task.createdAt}
             AND project_id = ${task.projectId}
-            AND thread_id IS NULL AND thread_mode != 'new_thread'
+            AND json(destination_json) = json(${encodeDestinationJson(destination)})
         `;
         const shell = yield* threadManagement.getThreadShell(threadId);
         if (shell === null || shell.deletedAt != null) yield* deleteForThread(threadId);
@@ -1023,12 +990,11 @@ export const layer = Layer.effect(
         if (
           trigger === "scheduled" &&
           active.schedule.type !== "once" &&
-          active.threadId !== null
+          active.destination.type === "existing_thread"
         ) {
-          const occurrence = yield* queuedOccurrence(
-            active.id,
-            ThreadId.make(active.threadId),
-          ).pipe(Effect.orElseSucceed(() => null));
+          const occurrence = yield* queuedOccurrence(active.id, active.destination.threadId).pipe(
+            Effect.orElseSucceed(() => null),
+          );
           if (occurrence !== null) {
             yield* rescheduleMissedRun(
               active,
@@ -1082,7 +1048,7 @@ export const layer = Layer.effect(
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
         const prompt = webhook?.prompt ?? active.prompt;
-        const threadMode = scheduledTaskThreadMode(active);
+        const destination = active.destination;
 
         // A bound thread can move to another project (No project to a project) while
         // this fires. Follow it; one move needs at most two retries. Same ids replay safely.
@@ -1101,7 +1067,9 @@ export const layer = Layer.effect(
               text: prompt,
               attachments: [],
               mode: "queue",
-              ...(threadMode === "fresh_session" ? { freshContext: true } : {}),
+              ...(destination.type === "existing_thread" && destination.session === "fresh_session"
+                ? { freshContext: true }
+                : {}),
               createdBy: active.createdBy,
               creationSource: active.creationSource,
             })
@@ -1123,17 +1091,17 @@ export const layer = Layer.effect(
 
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
         const result =
-          active.threadId === null
+          destination.type === "new_thread"
             ? yield* Effect.exit(
                 threadLaunch
                   .launch({
                     commandId,
-                    projectId: active.projectId,
+                    projectId: destination.projectId,
                     title: active.title,
-                    modelSelection: active.modelSelection,
+                    modelSelection: destination.modelSelection,
                     runtimeMode: active.runtimeMode,
                     interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
+                    workspaceStrategy: destination.workspaceStrategy,
                     initialMessage: {
                       messageId,
                       scheduledTaskId: active.id,
@@ -1145,16 +1113,12 @@ export const layer = Layer.effect(
                   })
                   .pipe(
                     Effect.map((launched) => launched.threadId),
-                    Effect.tap((threadId) =>
-                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
-                    ),
+                    Effect.tap((threadId) => bindThread(active, threadId)),
                   ),
               )
             : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                  Effect.as(ThreadId.make(active.threadId)),
+                sendBound(destination.threadId, active.projectId, 2).pipe(
+                  Effect.as(destination.threadId),
                 ),
               );
 
@@ -1502,25 +1466,31 @@ export const layer = Layer.effect(
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
-      const threadMode = resolveThreadMode(input, existingTask);
-      const keptThreadId =
-        input.threadId ?? (input.unbindThread === true ? null : (existingTask?.threadId ?? null));
-      // A bound thread belongs to its project, so moving the task leaves it for a new one.
-      const movedOffThread =
-        existingTask !== null &&
-        existingTask.projectId !== input.projectId &&
-        keptThreadId === existingTask.threadId;
-      const threadId = threadMode === "new_thread" || movedOffThread ? null : keptThreadId;
+      const requestedDestination = input.destination ?? existingTask?.destination;
+      if (requestedDestination === undefined) {
+        return yield* taskError("A new scheduled task needs a destination.", { taskId: id });
+      }
+      if (
+        requestedDestination.type === "new_thread" &&
+        requestedDestination.projectId !== input.projectId
+      ) {
+        return yield* taskError("The destination belongs to a different project.", { taskId: id });
+      }
       // An unchanged destination is not rechecked, so a task on an archived thread stays editable.
-      if (threadId !== null && threadId !== existingTask?.threadId) {
-        yield* requireDestinationThread(threadId, input.projectId, id);
+      if (
+        requestedDestination.type === "existing_thread" &&
+        (existingTask?.destination.type !== "existing_thread" ||
+          existingTask.destination.threadId !== requestedDestination.threadId ||
+          existingTask.projectId !== input.projectId)
+      ) {
+        yield* requireDestinationThread(requestedDestination.threadId, input.projectId, id);
       }
       // Refused on save rather than at run time; a disabled task can still be saved, so one
       // stored above the ceiling can be turned off before its mode is lowered. A task bound to a
       // thread runs in that thread's mode, which the orchestrator checks instead. Checked before
       // the save consumes a webhook secret.
       const modeDenial =
-        input.enabled && threadId === null
+        input.enabled && requestedDestination.type === "new_thread"
           ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
           : undefined;
       if (modeDenial !== undefined) return yield* taskError(modeDenial, { taskId: id });
@@ -1599,12 +1569,13 @@ export const layer = Layer.effect(
             })
           : { token: null, secret: null, secretChanged: true };
       // A folder that is not a Git repository, Scratch included, cannot hold a worktree.
-      const workspaceStrategy: ScheduledTask["workspaceStrategy"] =
-        input.workspaceStrategy.type === "worktree" &&
+      const destination: ScheduledTaskDestination =
+        requestedDestination.type === "new_thread" &&
+        requestedDestination.workspaceStrategy.type === "worktree" &&
         ((yield* managedFolders.isScratchProject(input.projectId)) ||
           (yield* threadLaunch.isNonGitProject(input.projectId)))
-          ? { type: "root" }
-          : input.workspaceStrategy;
+          ? { ...requestedDestination, workspaceStrategy: { type: "root" as const } }
+          : requestedDestination;
       const scheduleUnchanged =
         existingTask !== null &&
         existingTask.enabled === input.enabled &&
@@ -1618,10 +1589,7 @@ export const layer = Layer.effect(
         enabled: input.enabled,
         schedule,
         projectId: input.projectId,
-        threadId,
-        threadMode,
-        workspaceStrategy,
-        modelSelection: input.modelSelection,
+        destination,
         runtimeMode: input.runtimeMode,
         interactionMode: input.interactionMode,
         createdBy: existingTask?.createdBy ?? input.createdBy ?? "user",
@@ -1640,11 +1608,70 @@ export const layer = Layer.effect(
         task,
         input.requireExisting === true,
         scheduleUnchanged ? existingTask.schedule : null,
-        threadId === null && input.unbindThread === true ? (existingTask?.threadId ?? null) : null,
+        input.destination === undefined,
         webhook,
       );
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
+    });
+
+    const upsertFromClient: ScheduledTaskService["Service"]["upsertFromClient"] = Effect.fn(
+      "ScheduledTaskService.upsertFromClient",
+    )(function* (input) {
+      if (!("workspaceStrategy" in input)) return yield* upsert(input);
+      const {
+        threadId: requestedThread,
+        threadMode,
+        unbindThread,
+        workspaceStrategy,
+        modelSelection,
+        ...fields
+      } = input;
+      const saved = input.id === undefined ? null : yield* findTask(input.id);
+      const prior = saved?.destination;
+      const bound =
+        saved?.projectId === input.projectId && prior?.type === "existing_thread"
+          ? prior
+          : undefined;
+      const threadId = requestedThread ?? (unbindThread === true ? undefined : bound?.threadId);
+      const mode =
+        threadMode ?? (threadId === undefined ? undefined : (bound?.session ?? "continue"));
+      const afterLaunch = mode ?? (prior?.type === "new_thread" ? prior.afterLaunch : undefined);
+      const destination =
+        threadId !== undefined && mode !== undefined && mode !== "new_thread"
+          ? { type: "existing_thread" as const, threadId, session: mode }
+          : {
+              type: "new_thread" as const,
+              projectId: input.projectId,
+              workspaceStrategy,
+              modelSelection,
+              ...(afterLaunch === undefined || afterLaunch === "new_thread" ? {} : { afterLaunch }),
+            };
+      return yield* upsert({ ...fields, destination });
+    });
+
+    const toSettingsRpc: ScheduledTaskService["Service"]["toSettingsRpc"] = Effect.fn(
+      "ScheduledTaskService.toSettingsRpc",
+    )(function* (task) {
+      const { destination } = task;
+      if (destination.type === "new_thread")
+        return {
+          ...task,
+          threadId: null,
+          threadMode: destination.afterLaunch ?? "new_thread",
+          workspaceStrategy: destination.workspaceStrategy,
+          modelSelection: destination.modelSelection,
+        };
+      const shell = yield* threadManagement
+        .getThreadShell(destination.threadId)
+        .pipe(Effect.orElseSucceed(() => null));
+      return {
+        ...task,
+        threadId: destination.threadId,
+        threadMode: destination.session,
+        workspaceStrategy: { type: "root" as const },
+        ...(shell === null ? {} : { modelSelection: shell.modelSelection }),
+      };
     });
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = Effect.fn(
@@ -1660,7 +1687,7 @@ export const layer = Layer.effect(
         return yield* taskError(webhookPolicyBlock, { taskId: input.id });
       }
       const modeDenial =
-        input.enabled && existing.threadId === null
+        input.enabled && existing.destination.type === "new_thread"
           ? managedRuntimeModeDenial(managedPolicy.summary, existing.runtimeMode)
           : undefined;
       if (modeDenial !== undefined) {
@@ -2725,6 +2752,8 @@ export const layer = Layer.effect(
       list,
       subscribeList,
       upsert,
+      upsertFromClient,
+      toSettingsRpc,
       setEnabled,
       delete: deleteTask,
       deleteForThread,

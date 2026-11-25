@@ -3,12 +3,37 @@ import * as Schema from "effect/Schema";
 
 import {
   MIN_SCHEDULED_TASK_INTERVAL_MS,
+  ScheduledTaskDestination,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
+import {
+  OrchestratorMcpSaveScheduledTaskInput,
+  OrchestratorMcpWakeOnWebhookInput,
+} from "./orchestratorMcp.ts";
 
 const decodeSchedule = Schema.decodeUnknownSync(ScheduledTaskSchedule);
 const decodeUpsertSchedule = Schema.decodeUnknownSync(ScheduledTaskUpsertSchedule);
+const isDestination = Schema.is(ScheduledTaskDestination);
+const decodeClock = Schema.decodeUnknownSync(OrchestratorMcpSaveScheduledTaskInput);
+const decodeWebhook = Schema.decodeUnknownSync(OrchestratorMcpWakeOnWebhookInput);
+
+it("refuses model overrides on a bound destination", () => {
+  const destination = { type: "existing_thread", threadId: "thread", session: "continue" };
+  const model = { instanceId: "codex", model: "gpt-6-luna" };
+  expect(isDestination(destination)).toBe(true);
+  expect(isDestination({ ...destination, modelSelection: model })).toBe(false);
+  expect(() =>
+    decodeClock({ destination: { ...destination, target: { model: model.model } } }),
+  ).toThrow();
+});
+
+it("accepts webhook settings only through the webhook tool", () => {
+  expect(() => decodeClock({ prompt: "Review CI", schedule: { type: "webhook" } })).toThrow();
+  expect(decodeWebhook({ prompt: "Review CI", webhook: { fireOnce: true } })).toMatchObject({
+    webhook: { fireOnce: true },
+  });
+});
 
 describe("ScheduledTaskSchedule", () => {
   it("keeps legacy sub-minute persisted schedules readable", () => {

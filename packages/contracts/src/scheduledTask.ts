@@ -200,7 +200,7 @@ const ScheduledTaskWebhookSchedule = Schema.Struct({
   description: "Run on each webhook request.",
 });
 
-const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
+export const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
   type: Schema.Literal("webhook"),
   fireOnce: Schema.optional(Schema.Boolean).annotate({
     description:
@@ -239,7 +239,7 @@ export const ScheduledTaskSchedule = Schema.Union([
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
-export const ScheduledTaskUpsertSchedule = Schema.Union([
+export const ScheduledTaskUpsertClockSchedule = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("interval"),
     everyMs: ScheduledTaskIntervalMs.check(
@@ -251,6 +251,10 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
   ScheduledTaskCronSchedule,
+]);
+
+export const ScheduledTaskUpsertSchedule = Schema.Union([
+  ScheduledTaskUpsertClockSchedule,
   ScheduledTaskUpsertWebhookSchedule,
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
@@ -265,18 +269,31 @@ export const ScheduledTaskWebhookEndpoint = Schema.Struct({
 });
 export type ScheduledTaskWebhookEndpoint = typeof ScheduledTaskWebhookEndpoint.Type;
 
-/**
- * Where runs go. One-thread modes launch their thread on the first run and keep it; `fresh_session`
- * starts each later run in a new provider session there.
- */
-export const ScheduledTaskThreadMode = Schema.Literals(["new_thread", "continue", "fresh_session"]);
-export type ScheduledTaskThreadMode = typeof ScheduledTaskThreadMode.Type;
+export const ScheduledTaskSession = Schema.Literals(["continue", "fresh_session"]);
+export type ScheduledTaskSession = typeof ScheduledTaskSession.Type;
+export type ScheduledTaskThreadMode = "new_thread" | ScheduledTaskSession;
 
-/** Servers before thread modes omit it; their bound tasks continue the conversation. */
-export function scheduledTaskThreadMode(
-  task: Pick<ScheduledTask, "threadId" | "threadMode">,
-): ScheduledTaskThreadMode {
-  return task.threadMode ?? (task.threadId === null ? "new_thread" : "continue");
+export const ScheduledTaskDestination = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("new_thread"),
+    projectId: ProjectId,
+    workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+    modelSelection: ModelSelection,
+    afterLaunch: Schema.optional(ScheduledTaskSession),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("existing_thread"),
+    threadId: ThreadId,
+    session: ScheduledTaskSession,
+    modelSelection: Schema.optionalKey(Schema.Never),
+  }),
+]);
+export type ScheduledTaskDestination = typeof ScheduledTaskDestination.Type;
+
+export function scheduledTaskThreadMode({ destination }: Pick<ScheduledTask, "destination">) {
+  return destination.type === "existing_thread"
+    ? destination.session
+    : (destination.afterLaunch ?? "new_thread");
 }
 
 export const ScheduledTask = Schema.Struct({
@@ -286,10 +303,7 @@ export const ScheduledTask = Schema.Struct({
   enabled: Schema.Boolean,
   schedule: ScheduledTaskSchedule,
   projectId: ProjectId,
-  threadId: Schema.NullOr(ThreadId),
-  threadMode: Schema.optional(ScheduledTaskThreadMode),
-  workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
-  modelSelection: ModelSelection,
+  destination: ScheduledTaskDestination,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   createdBy: OrchestrationV2Actor,
@@ -329,20 +343,50 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   enabled: Schema.Boolean,
   schedule: ScheduledTaskUpsertSchedule,
   projectId: ProjectId,
-  /** Omitted or null: keep the stored thread, which a first run may have bound since the form opened. */
-  threadId: Schema.optional(Schema.NullOr(ThreadId)),
-  /** True with no `threadId`: the user cleared the thread, so the next run starts one. */
-  unbindThread: Schema.optional(Schema.Boolean),
-  /** Omitted: keep the stored mode, or derive it from `threadId` for a new or rebound task. */
-  threadMode: Schema.optional(ScheduledTaskThreadMode),
-  workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
-  modelSelection: ModelSelection,
+  destination: Schema.optional(ScheduledTaskDestination),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
+
+const ScheduledTaskLegacyDestinationFields = {
+  threadId: Schema.NullOr(ThreadId),
+  threadMode: Schema.optional(Schema.Literals(["new_thread", "continue", "fresh_session"])),
+  workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  modelSelection: ModelSelection,
+};
+
+// Released clients decode the flat fields. Keep them on the settings RPC only.
+export const ScheduledTaskRpcData = Schema.Struct({
+  ...ScheduledTask.fields,
+  threadId: Schema.optional(ScheduledTaskLegacyDestinationFields.threadId),
+  threadMode: ScheduledTaskLegacyDestinationFields.threadMode,
+  workspaceStrategy: Schema.optional(ScheduledTaskLegacyDestinationFields.workspaceStrategy),
+  modelSelection: Schema.optional(ScheduledTaskLegacyDestinationFields.modelSelection),
+});
+export type ScheduledTaskRpcData = typeof ScheduledTaskRpcData.Type;
+
+const { destination: _destination, ...legacyUpsertFields } = ScheduledTaskUpsertInput.fields;
+const ScheduledTaskLegacyUpsert = Schema.Struct({
+  ...legacyUpsertFields,
+  ...ScheduledTaskLegacyDestinationFields,
+  threadId: Schema.optional(ScheduledTaskLegacyDestinationFields.threadId),
+  unbindThread: Schema.optional(Schema.Boolean),
+  destination: Schema.optionalKey(Schema.Never),
+});
+export const ScheduledTaskRpcUpsertInput = Schema.Union([
+  ScheduledTaskLegacyUpsert,
+  ScheduledTaskUpsertInput,
+]);
+export type ScheduledTaskRpcUpsertInput = typeof ScheduledTaskRpcUpsertInput.Type;
+
+export const ScheduledTaskRpcListResult = Schema.Struct({
+  ...ScheduledTaskListResult.fields,
+  tasks: ForwardCompatibleArray(ScheduledTaskRpcData),
+});
+export const ScheduledTaskRpcMutationResult = Schema.Struct({ task: ScheduledTaskRpcData });
 
 export const ScheduledTaskSetEnabledInput = Schema.Struct({
   id: ScheduledTaskId,

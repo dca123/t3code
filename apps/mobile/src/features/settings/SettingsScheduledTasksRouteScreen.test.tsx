@@ -160,11 +160,14 @@ beforeEach(() => {
     enabled: true,
     schedule: { type: "fixed_time", timeOfDay: "05:00" },
     projectId: ProjectId.make("project"),
-    threadId: null,
-    workspaceStrategy: { type: "root" },
-    modelSelection: {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "model",
+    destination: {
+      type: "new_thread",
+      projectId: ProjectId.make("project"),
+      workspaceStrategy: { type: "root" },
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "model",
+      },
     },
     runtimeMode: "full-access",
     interactionMode: "default",

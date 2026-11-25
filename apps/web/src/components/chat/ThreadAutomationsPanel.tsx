@@ -97,7 +97,8 @@ export function ThreadAutomationsPanel(props: {
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
 
   const boundTasks = (tasksQuery.data?.tasks ?? []).filter(
-    (task) => task.threadId === props.threadId,
+    (task) =>
+      task.destination.type === "existing_thread" && task.destination.threadId === props.threadId,
   );
 
   if (tasksQuery.error === null && boundTasks.length === 0) return null;

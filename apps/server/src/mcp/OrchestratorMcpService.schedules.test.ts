@@ -60,8 +60,12 @@ const fixture = Effect.gen(function* () {
     projectId: ProjectId.make("project"),
     schedule: { type: "interval", everyMs: 60_000 },
     enabled: true,
-    workspaceStrategy: { type: "root" },
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+    destination: {
+      type: "new_thread",
+      projectId: ProjectId.make("project"),
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+    },
     runtimeMode: "full-access",
     interactionMode: "default",
   });

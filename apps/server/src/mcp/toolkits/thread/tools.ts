@@ -229,7 +229,7 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   }),
   success: Schema.Struct({
     taskId: ScheduledTaskId,
-    threadId: ScheduledTask.fields.threadId,
+    threadId: Schema.NullOr(ThreadId),
     link: Schema.optional(Schema.String),
     lastRunStatus: ScheduledTask.fields.lastRunStatus,
     lastRunError: ScheduledTask.fields.lastRunError,

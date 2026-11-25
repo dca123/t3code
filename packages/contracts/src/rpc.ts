@@ -442,17 +442,16 @@ import {
   ScheduledTaskDeleteResult,
   ScheduledTaskError,
   ScheduledTaskListInput,
-  ScheduledTaskListResult,
+  ScheduledTaskRpcListResult,
   ScheduledTaskRunNowInput,
   ScheduledTaskRotateWebhookTokenInput,
   ScheduledTaskListWebhookDeliveriesInput,
   ScheduledTaskListWebhookDeliveriesResult,
   ScheduledTaskGetWebhookDeliveryInput,
   ScheduledTaskGetWebhookDeliveryResult,
-  ScheduledTaskRunNowResult,
   ScheduledTaskSetEnabledInput,
-  ScheduledTaskUpsertInput,
-  ScheduledTaskMutationResult,
+  ScheduledTaskRpcUpsertInput,
+  ScheduledTaskRpcMutationResult,
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import { AgentFeedbackAnswerInput, AgentFeedbackRequestError } from "./agentFeedback.ts";
@@ -2377,20 +2376,20 @@ const WsWorkflowsDeleteDefinitionRpc = Rpc.make(WS_METHODS.workflowsDeleteDefini
 
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
-  success: ScheduledTaskListResult,
+  success: ScheduledTaskRpcListResult,
   error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
   stream: true,
 });
 
 const WsScheduledTasksUpsertRpc = Rpc.make(WS_METHODS.scheduledTasksUpsert, {
-  payload: ScheduledTaskUpsertInput,
-  success: ScheduledTaskMutationResult,
+  payload: ScheduledTaskRpcUpsertInput,
+  success: ScheduledTaskRpcMutationResult,
   error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
 });
 
 const WsScheduledTasksSetEnabledRpc = Rpc.make(WS_METHODS.scheduledTasksSetEnabled, {
   payload: ScheduledTaskSetEnabledInput,
-  success: ScheduledTaskMutationResult,
+  success: ScheduledTaskRpcMutationResult,
   error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
 });
 
@@ -2402,7 +2401,7 @@ const WsScheduledTasksDeleteRpc = Rpc.make(WS_METHODS.scheduledTasksDelete, {
 
 const WsScheduledTasksRunNowRpc = Rpc.make(WS_METHODS.scheduledTasksRunNow, {
   payload: ScheduledTaskRunNowInput,
-  success: ScheduledTaskRunNowResult,
+  success: ScheduledTaskRpcMutationResult,
   error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
 });
 
@@ -2410,7 +2409,7 @@ const WsScheduledTasksRotateWebhookTokenRpc = Rpc.make(
   WS_METHODS.scheduledTasksRotateWebhookToken,
   {
     payload: ScheduledTaskRotateWebhookTokenInput,
-    success: ScheduledTaskMutationResult,
+    success: ScheduledTaskRpcMutationResult,
     error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
   },
 );

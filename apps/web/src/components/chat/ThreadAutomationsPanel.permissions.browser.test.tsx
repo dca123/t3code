@@ -34,7 +34,7 @@ const environmentId = EnvironmentId.make("remote");
 const threadId = ThreadId.make("thread");
 const task = {
   id: ScheduledTaskId.make("task"),
-  threadId,
+  destination: { type: "existing_thread", threadId, session: "continue" },
   title: "Daily review",
   enabled: true,
   schedule: { type: "interval", everyMs: 60000 },

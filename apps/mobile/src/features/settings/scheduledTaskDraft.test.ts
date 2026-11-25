@@ -220,9 +220,12 @@ describe("scheduled task worktree base", () => {
     enabled: true,
     schedule: { type: "interval", everyMs: 60_000 },
     projectId: ProjectId.make("project"),
-    threadId: null,
-    workspaceStrategy: { type: "root" },
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    destination: {
+      type: "new_thread",
+      projectId: ProjectId.make("project"),
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    },
     runtimeMode: "full-access",
     interactionMode: "default",
     createdBy: "user",
@@ -240,8 +243,13 @@ describe("scheduled task worktree base", () => {
     expect(createDraft(ProjectId.make("project"), null).baseRef).toBe("");
     expect(editDraft(rootTask).baseRef).toBe("");
     expect(
-      editDraft({ ...rootTask, workspaceStrategy: { type: "worktree", baseRef: "release" } })
-        .baseRef,
+      editDraft({
+        ...rootTask,
+        destination: {
+          ...rootTask.destination,
+          workspaceStrategy: { type: "worktree" as const, baseRef: "release" },
+        },
+      }).baseRef,
     ).toBe("release");
   });
 });

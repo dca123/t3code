@@ -43,8 +43,12 @@ const input = {
   prompt: "Review the open pull requests.",
   enabled: true,
   projectId: "project-interval-duration",
-  workspaceStrategy: { type: "root" },
-  modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+  destination: {
+    type: "new_thread",
+    projectId: "project-interval-duration",
+    workspaceStrategy: { type: "root" },
+    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+  },
   runtimeMode: "full-access",
   interactionMode: "default",
 };
@@ -240,14 +244,13 @@ it.effect.each([
           yield* decodeInput({
             ...onceInput,
             schedule: saved,
-            workspaceStrategy: { type: "root" },
           }),
         );
         const renamed = yield* service.upsert(
           yield* decodeInput({
             ...onceInput,
             schedule: edited,
-            workspaceStrategy: worktree,
+            destination: { ...onceInput.destination, workspaceStrategy: worktree },
             title: "Renamed",
           }),
         );

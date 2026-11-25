@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AuthMcpClientAccess } from "./auth.ts";
@@ -21,9 +22,13 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import {
+  ScheduledTaskDestination,
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
+  ScheduledTaskSession,
+  ScheduledTaskUpsertClockSchedule,
   ScheduledTaskUpsertSchedule,
+  ScheduledTaskUpsertWebhookSchedule,
 } from "./scheduledTask.ts";
 import { ProviderInteractionMode, ProviderRequestKind, RuntimeMode } from "./providerPolicy.ts";
 import { PullRequestState } from "./pullRequest.ts";
@@ -40,6 +45,7 @@ import {
   OrchestrationV2CreationSource,
   OrchestrationV2DelegatedFrom,
   OrchestrationV2RunStatus,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
@@ -59,13 +65,13 @@ export const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(Schema
 
 // OpenCode 1.15 serializes nested MCP union objects as JSON strings; decode that form at the boundary.
 const OrchestratorMcpScheduleFromJsonString = Schema.fromJsonString(
-  ScheduledTaskUpsertSchedule,
+  ScheduledTaskUpsertClockSchedule,
 ).annotate({
   description: "JSON-text schedule. Prefer the object form.",
 });
 
 const OrchestratorMcpSchedule = Schema.Union([
-  ScheduledTaskUpsertSchedule,
+  ScheduledTaskUpsertClockSchedule,
   OrchestratorMcpScheduleFromJsonString,
 ]).annotate({
   description:
@@ -721,38 +727,64 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
 });
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
 
-export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
-  environmentId: OrchestratorMcpEnvironmentTarget,
-  projectId: OrchestratorMcpProjectTarget,
-  prompt: OrchestratorMcpPrompt,
-  schedule: OrchestratorMcpSchedule,
-  title: Schema.optional(OrchestratorMcpTitle),
-  enabled: Schema.optional(Schema.Boolean.annotate({ description: "Default true." })),
-  bindToCurrentThread: Schema.optional(
-    Schema.Boolean.annotate({
+const ScheduledTaskDestinationInput = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("new_thread"),
+    projectId: OrchestratorMcpProjectTarget,
+    workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    target: Schema.optional(
+      OrchestratorMcpTarget.mapFields(Struct.pick(["providerInstanceId", "model", "options"])),
+    ),
+    afterLaunch: Schema.optional(ScheduledTaskSession).annotate({
       description:
-        "Post here, else new thread per run. Unset: true in own project, else false; updates keep it.",
+        "Keep the first launched thread for later runs. Omit to launch one thread per run.",
     }),
-  ),
-  freshSession: Schema.optional(
-    Schema.Boolean.annotate({
+  }),
+  Schema.Struct({
+    type: Schema.Literal("existing_thread"),
+    threadId: Schema.Union([Schema.Literal("current"), ThreadId]).annotate({
+      description: 'Pass "current" for this thread, or the ID of an existing thread.',
+    }),
+    session: Schema.optional(ScheduledTaskSession).annotate({
       description:
-        "Runs share one thread but each starts a fresh session. Unbound: the first run makes the thread.",
+        "Default: continue the conversation. fresh_session starts a clean provider session.",
     }),
-  ),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-});
-export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
+    target: Schema.optionalKey(Schema.Never),
+  }),
+]);
+export type OrchestratorMcpScheduledTaskDestinationInput =
+  typeof ScheduledTaskDestinationInput.Type;
 
-/** `schedule_task` creates a task, or updates one when `scheduledTaskId` is given. */
-export const OrchestratorMcpSaveScheduledTaskInput = Schema.Struct({
-  ...OrchestratorMcpScheduleTaskInput.fields,
+const ScheduledTaskSaveFields = {
+  environmentId: OrchestratorMcpEnvironmentTarget,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   prompt: Schema.optional(OrchestratorMcpPrompt),
+  title: Schema.optional(OrchestratorMcpTitle),
+  enabled: Schema.optional(Schema.Boolean.annotate({ description: "Default true." })),
+  destination: Schema.optional(ScheduledTaskDestinationInput).annotate({
+    description:
+      "Existing threads keep their own model. To choose a model or thinking, use new_thread with target from orchestrator_capabilities. Omit to keep the destination on edits; new tasks default to this thread.",
+  }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+};
+
+export const OrchestratorMcpSaveScheduledTaskInput = Schema.Struct({
+  ...ScheduledTaskSaveFields,
   schedule: Schema.optional(OrchestratorMcpSchedule),
 });
-export type OrchestratorMcpSaveScheduledTaskInput =
-  typeof OrchestratorMcpSaveScheduledTaskInput.Type;
+
+export const OrchestratorMcpWakeOnWebhookInput = Schema.Struct({
+  ...ScheduledTaskSaveFields,
+  webhook: Schema.optional(ScheduledTaskUpsertWebhookSchedule.mapFields(Struct.omit(["type"]))),
+});
+
+export type OrchestratorMcpScheduleTaskInput = Omit<
+  typeof OrchestratorMcpSaveScheduledTaskInput.Type,
+  "scheduledTaskId" | "prompt" | "schedule"
+> & {
+  readonly prompt: string;
+  readonly schedule: ScheduledTaskUpsertSchedule;
+};
 
 export const OrchestratorMcpScheduledTask = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,
@@ -760,8 +792,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   prompt: Schema.String,
   enabled: Schema.Boolean,
   projectId: ProjectId,
-  boundThreadId: Schema.NullOr(ThreadId),
-  freshSession: Schema.Boolean,
+  destination: ScheduledTaskDestination,
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   nextRunAtLocal: Schema.optional(Schema.String).annotate({
@@ -800,18 +831,14 @@ export const OrchestratorMcpListScheduledTasksResult = Schema.Struct({
 export type OrchestratorMcpListScheduledTasksResult =
   typeof OrchestratorMcpListScheduledTasksResult.Type;
 
-export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
-  environmentId: OrchestratorMcpEnvironmentTarget,
-  scheduledTaskId: ScheduledTaskId,
-  prompt: Schema.optional(OrchestratorMcpPrompt),
-  title: Schema.optional(OrchestratorMcpTitle),
-  schedule: Schema.optional(OrchestratorMcpSchedule),
-  enabled: Schema.optional(Schema.Boolean),
-  bindToCurrentThread: Schema.optional(Schema.Boolean),
-  freshSession: Schema.optional(Schema.Boolean),
-});
-export type OrchestratorMcpUpdateScheduledTaskInput =
-  typeof OrchestratorMcpUpdateScheduledTaskInput.Type;
+export type OrchestratorMcpUpdateScheduledTaskInput = Omit<
+  typeof OrchestratorMcpSaveScheduledTaskInput.Type,
+  "scheduledTaskId" | "schedule"
+> & {
+  readonly scheduledTaskId: ScheduledTaskId;
+  readonly schedule?: ScheduledTaskUpsertSchedule | undefined;
+  readonly trigger?: "clock" | "webhook";
+};
 
 // Not trimmed: whitespace in a password matters. The check stays out of the advertised schema.
 const PastedSecretValue = Schema.String.check(

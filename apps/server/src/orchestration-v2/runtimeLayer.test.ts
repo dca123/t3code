@@ -548,17 +548,21 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         }
         const save = (name: string, target: ThreadId | null, webhook = false) =>
           tasks.upsert({
-            // As schedule_task sends it, so clearing the thread unbinds the task.
-            threadMode: target === null ? "new_thread" : "continue",
             id: ScheduledTaskId.make(`automation:${deletion}:${name}`),
             title: name,
             prompt: "Check orchestration progress",
             enabled: !webhook,
             schedule: webhook ? { type: "webhook" } : { type: "interval", everyMs: 60_000 },
             projectId: target === otherThreadId ? otherProjectId : projectId,
-            threadId: target,
-            workspaceStrategy: { type: "root" },
-            modelSelection,
+            destination:
+              target === null
+                ? {
+                    type: "new_thread",
+                    projectId,
+                    modelSelection,
+                    workspaceStrategy: { type: "root" },
+                  }
+                : { type: "existing_thread", threadId: target, session: "continue" },
             runtimeMode: "full-access",
             interactionMode: "default",
             createdBy: "agent",
@@ -12617,9 +12621,7 @@ it.layer(layerScratchPromotionTest)("turning a No project thread into a project"
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId: SCRATCH_PROJECT_ID,
-        threadId: siblingId,
-        workspaceStrategy: { type: "root" },
-        modelSelection,
+        destination: { type: "existing_thread", threadId: siblingId, session: "continue" },
         runtimeMode: "full-access",
         interactionMode: "default",
         createdBy: "user",

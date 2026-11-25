@@ -148,7 +148,6 @@ export interface DraftState {
   readonly projectId: string;
   readonly threadId: string;
   /** The thread the form opened with, so a save can tell a cleared destination from an unbound one. */
-  readonly savedThreadId: string;
   readonly threadMode: ScheduledTaskThreadMode;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
@@ -358,6 +357,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     schedule.type === "fixed_time" && schedule.weekdays && schedule.weekdays.length > 0
       ? new Set(schedule.weekdays)
       : new Set([0, 1, 2, 3, 4, 5, 6]);
+  const { destination } = task;
+  const launch = destination.type === "new_thread" ? destination : null;
+  const workspace = launch?.workspaceStrategy;
   return {
     editingId: task.id,
     title: task.title,
@@ -377,23 +379,17 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         ? schedule.timeZone
         : Intl.DateTimeFormat().resolvedOptions().timeZone,
     projectId: task.projectId,
-    threadId: task.threadId ?? "",
-    savedThreadId: task.threadId ?? "",
+    threadId: destination.type === "existing_thread" ? destination.threadId : "",
     threadMode: scheduledTaskThreadMode(task),
-    workspaceMode: task.workspaceStrategy.type,
-    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "",
-    startFromOrigin:
-      task.workspaceStrategy.type === "worktree"
-        ? (task.workspaceStrategy.startFromOrigin ?? false)
-        : true,
-    existingWorktreePath:
-      task.workspaceStrategy.type === "existing_worktree"
-        ? task.workspaceStrategy.worktreePath
-        : "",
-    modelKey: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
+    workspaceMode: workspace?.type ?? "worktree",
+    baseRef: workspace?.type === "worktree" ? workspace.baseRef : "",
+    startFromOrigin: workspace?.type === "worktree" ? (workspace.startFromOrigin ?? false) : true,
+    existingWorktreePath: workspace?.type === "existing_worktree" ? workspace.worktreePath : "",
+    modelKey:
+      launch === null ? "" : `${launch.modelSelection.instanceId}:${launch.modelSelection.model}`,
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
-    baseModelSelection: task.modelSelection,
+    baseModelSelection: launch?.modelSelection ?? null,
     ...(schedule.type === "webhook" && schedule.signature !== null
       ? {
           signatureEnabled: true,

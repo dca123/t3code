@@ -330,27 +330,24 @@ export function createDraft(
 }
 
 export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
+  const { destination } = task;
+  const launch = destination.type === "new_thread" ? destination : null;
+  const workspace = launch?.workspaceStrategy;
   return {
     task,
     title: task.title,
     prompt: task.prompt,
     projectId: task.projectId,
-    threadId: task.threadId,
-    modelSelection: task.modelSelection,
-    modelSelectionIsExplicit: true,
+    threadId: destination.type === "existing_thread" ? destination.threadId : null,
+    modelSelection: launch?.modelSelection ?? null,
+    modelSelectionIsExplicit: launch !== null,
     schedule: scheduleDraftForTask(task),
     threadMode: scheduledTaskThreadMode(task),
-    workspace: task.workspaceStrategy.type,
-    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "",
-    checkoutPath:
-      task.workspaceStrategy.type === "existing_worktree"
-        ? task.workspaceStrategy.worktreePath
-        : "",
+    workspace: workspace?.type ?? "worktree",
+    baseRef: workspace?.type === "worktree" ? workspace.baseRef : "",
+    checkoutPath: workspace?.type === "existing_worktree" ? workspace.worktreePath : "",
     enabled: task.enabled,
-    startFromOrigin:
-      task.workspaceStrategy.type === "worktree"
-        ? (task.workspaceStrategy.startFromOrigin ?? false)
-        : true,
+    startFromOrigin: workspace?.type === "worktree" ? (workspace.startFromOrigin ?? false) : true,
     runtimeMode: task.runtimeMode,
   };
 }

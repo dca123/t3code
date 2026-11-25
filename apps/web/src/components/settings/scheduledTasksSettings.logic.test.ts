@@ -142,16 +142,19 @@ describe("scheduled task settings scope", () => {
   });
 });
 
-const legacyTask: ScheduledTask = {
+const legacyTask = {
   id: ScheduledTaskId.make("legacy-task"),
   title: "Review issues",
   prompt: "Review open issues",
   enabled: true,
   schedule: { type: "interval", everyMs: 60_000 },
   projectId: ProjectId.make("project"),
-  threadId: null,
-  workspaceStrategy: { type: "worktree", baseRef: "release" },
-  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+  destination: {
+    type: "new_thread",
+    projectId: ProjectId.make("project"),
+    workspaceStrategy: { type: "worktree", baseRef: "release" },
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+  },
   runtimeMode: "full-access",
   interactionMode: "default",
   createdBy: "user",
@@ -163,7 +166,7 @@ const legacyTask: ScheduledTask = {
   lastRunStatus: "never",
   lastRunError: null,
   runCount: 0,
-};
+} satisfies ScheduledTask;
 
 describe("editing scheduled task branch settings", () => {
   it("keeps an omitted origin flag on the local base branch", () => {
@@ -173,7 +176,10 @@ describe("editing scheduled task branch settings", () => {
   });
 
   it("leaves the base automatic when a task without a worktree switches to one", () => {
-    const draft = taskToDraft({ ...legacyTask, workspaceStrategy: { type: "root" } });
+    const draft = taskToDraft({
+      ...legacyTask,
+      destination: { ...legacyTask.destination, workspaceStrategy: { type: "root" as const } },
+    });
     expect(draft.baseRef).toBe("");
   });
 });
@@ -202,8 +208,11 @@ describe("scheduled task destination", () => {
   it("unbinding leaves the shared checkout for a new worktree from the remote", () => {
     const rootBound = taskToDraft({
       ...legacyTask,
-      threadId: ThreadId.make("thread:bound"),
-      workspaceStrategy: { type: "root" },
+      destination: {
+        type: "existing_thread",
+        threadId: ThreadId.make("thread:bound"),
+        session: "continue",
+      },
     });
     expect(unbindDraftFromThread(rootBound)).toMatchObject({
       threadId: "",

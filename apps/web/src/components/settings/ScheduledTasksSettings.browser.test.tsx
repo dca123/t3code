@@ -27,9 +27,11 @@ const task: ScheduledTask = {
   enabled: true,
   schedule: { type: "interval", everyMs: 60_000 },
   projectId,
-  threadId: ThreadId.make("older-thread"),
-  workspaceStrategy: { type: "root" },
-  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+  destination: {
+    type: "existing_thread",
+    threadId: ThreadId.make("older-thread"),
+    session: "continue",
+  },
   runtimeMode: "full-access",
   interactionMode: "default",
   createdBy: "user",
@@ -48,7 +50,7 @@ const threadFamilyRead = {
   snapshotSequence: 1,
   threads: [
     {
-      id: task.threadId,
+      id: ThreadId.make("older-thread"),
       title: "Fix login bug",
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
     },

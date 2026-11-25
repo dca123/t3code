@@ -1028,6 +1028,7 @@ const HANDOFF_TOOLS: ReadonlySet<string> = new Set([
   "t3_thread_send",
   "t3_thread_send_attachments",
   "schedule_task",
+  "wake_on_webhook",
   "run_scheduled_task_now",
 ]);
 

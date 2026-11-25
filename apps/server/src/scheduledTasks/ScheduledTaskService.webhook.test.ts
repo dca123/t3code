@@ -129,8 +129,12 @@ const webhookTaskInput = (overrides: Record<string, unknown> = {}) =>
     enabled: true,
     schedule: { type: "webhook" },
     projectId: "project-webhook",
-    workspaceStrategy: { type: "root" },
-    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    destination: {
+      type: "new_thread",
+      projectId: "project-webhook",
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    },
     runtimeMode: "full-access",
     interactionMode: "default",
     ...overrides,
@@ -1138,7 +1142,7 @@ it.effect("a coalesced window fails its delivery when the task row cannot be rea
           }),
         );
         yield* service.triggerWebhook(requestFor(task));
-        yield* sql`UPDATE scheduled_tasks SET model_selection_json = 'not json' WHERE task_id = ${task.id}`;
+        yield* sql`UPDATE scheduled_tasks SET destination_json = 'not json' WHERE task_id = ${task.id}`;
         yield* TestClock.adjust("10 seconds");
         yield* drainPendingDispatch(workers);
         assert.equal(yield* Queue.size(launches), 0);
@@ -2004,9 +2008,9 @@ it.effect.each([false, true])(
             yield* Queue.take(launches);
             const [before] = yield* sql<{
               last_run_webhook_delivery_id: string;
-              model_selection_json: string;
+              destination_json: string;
               run_count: number;
-            }>`SELECT last_run_webhook_delivery_id, model_selection_json, run_count FROM scheduled_tasks WHERE task_id = ${task.id}`;
+            }>`SELECT last_run_webhook_delivery_id, destination_json, run_count FROM scheduled_tasks WHERE task_id = ${task.id}`;
             assert.equal(
               before!.last_run_webhook_delivery_id,
               immediate._tag === "accepted" ? immediate.deliveryId : "",
@@ -2017,7 +2021,7 @@ it.effect.each([false, true])(
             );
             assert.equal(before!.run_count, 0);
             if (corrupt)
-              yield* sql`UPDATE scheduled_tasks SET model_selection_json = 'broken' WHERE task_id = ${task.id}`;
+              yield* sql`UPDATE scheduled_tasks SET destination_json = 'broken' WHERE task_id = ${task.id}`;
             const restartedWorkers = new Map<string, Effect.Effect<void>>();
             yield* withService(
               ({ service: restarted, launches: recoveredLaunches }) =>
@@ -2029,7 +2033,7 @@ it.effect.each([false, true])(
                   assert.equal(recovered!.run_count, 1);
                   assert.equal(recovered!.last_run_status, "failed");
                   if (corrupt)
-                    yield* sql`UPDATE scheduled_tasks SET model_selection_json = ${before!.model_selection_json} WHERE task_id = ${task.id}`;
+                    yield* sql`UPDATE scheduled_tasks SET destination_json = ${before!.destination_json} WHERE task_id = ${task.id}`;
                   yield* drainPendingDispatch(restartedWorkers);
                   assert.equal(yield* Queue.size(recoveredLaunches), 0);
                   assert.equal((yield* restarted.list()).tasks[0]!.runCount, 2);

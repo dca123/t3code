@@ -29,6 +29,7 @@ import {
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpScheduledTask,
+  type OrchestratorMcpScheduledTaskDestinationInput,
   type OrchestratorMcpScheduleTaskInput,
   type OrchestratorMcpScheduleTaskResult,
   type OrchestratorMcpTarget,
@@ -58,7 +59,6 @@ import {
   type RuntimeMode,
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
-  scheduledTaskThreadMode,
   type ServerProvider,
   type ServerProviderModel,
   ThreadId,
@@ -294,8 +294,7 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     prompt: task.prompt,
     enabled: task.enabled,
     projectId: task.projectId,
-    boundThreadId: task.threadId,
-    freshSession: scheduledTaskThreadMode(task) === "fresh_session",
+    destination: task.destination,
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     ...(task.schedule.type === "cron" && task.nextRunAt !== null
@@ -1356,14 +1355,7 @@ const make = Effect.gen(function* () {
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
     );
-    const selection = resolveProjectSettings(settings, project.id, project).settings
-      .defaultModelSelection;
-    if (selection === null)
-      return yield* failure(
-        "invalid_request",
-        `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
-      );
-    return selection;
+    return resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection;
   });
   const secretRequests = yield* SecretRequests.SecretRequests;
 
@@ -1673,7 +1665,12 @@ const make = Effect.gen(function* () {
   };
 
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
-    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly parent: {
+      readonly thread: Pick<
+        OrchestrationV2ThreadProjection["thread"],
+        "projectId" | "modelSelection"
+      >;
+    };
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
@@ -2315,8 +2312,7 @@ const make = Effect.gen(function* () {
 
   const scheduledTaskWorkspaceStrategy = Effect.fn(
     "OrchestratorMcpService.scheduledTaskWorkspaceStrategy",
-  )(function* (boundToThread: boolean, projectId: ProjectId) {
-    if (boundToThread) return { type: "root" as const };
+  )(function* (projectId: ProjectId) {
     const { workspaceRoot } = yield* requireProject(projectId);
     return {
       type: "worktree" as const,
@@ -2328,9 +2324,9 @@ const make = Effect.gen(function* () {
   const scheduledTaskRunModes = Effect.fn("OrchestratorMcpService.scheduledTaskRunModes")(
     function* (task: ScheduledTask) {
       const modes = [{ runtimeMode: task.runtimeMode, interactionMode: task.interactionMode }];
-      if (task.threadId === null) return modes;
+      if (task.destination.type === "new_thread") return modes;
       const bound = yield* threadManagement
-        .getThreadShell(task.threadId)
+        .getThreadShell(task.destination.threadId)
         .pipe(Effect.mapError(threadManagementFailure));
       return bound === null || bound.deletedAt !== null ? modes : [...modes, bound];
     },
@@ -2406,25 +2402,111 @@ const make = Effect.gen(function* () {
     return task;
   });
 
+  const resolveScheduledDestination = Effect.fn(
+    "OrchestratorMcpService.resolveScheduledDestination",
+  )(function* (
+    scope: McpInvocationScope,
+    caller: Effect.Success<ReturnType<typeof loadCaller<"runs">>>,
+    requested: OrchestratorMcpScheduledTaskDestinationInput | undefined,
+    existing?: ScheduledTask,
+  ) {
+    const { parent, limits } = caller;
+    if (
+      requested?.type === "existing_thread" ||
+      (requested === undefined && parent !== undefined && existing === undefined)
+    ) {
+      const requestedId = requested?.threadId ?? "current";
+      const threadId = requestedId === "current" ? parent?.thread.id : requestedId;
+      if (threadId === undefined)
+        return yield* failure("invalid_request", 'The "current" destination requires a T3 thread.');
+      const target =
+        parent?.thread.id === threadId ? parent : yield* loadTargetThread(scope, threadId);
+      yield* assertLiveCallerForOtherThread(scope, parent, target);
+      yield* assertTargetWithinLimits(limits, target.thread);
+      const prior = existing?.destination;
+      return {
+        projectId: target.thread.projectId,
+        destination: {
+          type: "existing_thread" as const,
+          threadId,
+          session:
+            requested?.session ??
+            (prior?.type === "existing_thread" && prior.threadId === threadId
+              ? prior.session
+              : "continue"),
+        },
+      };
+    }
+    const projectId = yield* resolveProjectTarget(
+      parent,
+      requested?.projectId ?? existing?.projectId,
+    );
+    yield* assertLiveCallerForOtherProject(scope, parent, projectId);
+    const project = yield* requireProject(projectId);
+    const prior = existing?.destination.type === "new_thread" ? existing.destination : undefined;
+    const target = requested?.target;
+    const inherited =
+      prior?.modelSelection ??
+      parent?.thread.modelSelection ??
+      (target?.providerInstanceId !== undefined && target.model !== undefined
+        ? { instanceId: target.providerInstanceId, model: target.model }
+        : yield* projectDefaultModelSelection(project));
+    if (inherited === null) {
+      return yield* failure(
+        "invalid_request",
+        "This project has no default model. Set the destination's provider and model.",
+      );
+    }
+    const workspaceStrategy =
+      requested?.workspaceStrategy ??
+      (prior?.projectId === projectId
+        ? prior.workspaceStrategy
+        : yield* scheduledTaskWorkspaceStrategy(projectId));
+    const modelSelection =
+      requested?.target === undefined
+        ? inherited
+        : (yield* resolveTargetRechecking({
+            parent: { thread: { projectId, modelSelection: inherited } },
+            target: requested.target,
+            providers: yield* loadProviders,
+            cwd:
+              workspaceStrategy.type === "existing_worktree"
+                ? workspaceStrategy.worktreePath
+                : project.workspaceRoot,
+          })).modelSelection;
+    if (
+      requested?.target !== undefined &&
+      !(yield* threadManagement
+        .isProviderInstanceEnabledForProject({ projectId, instanceId: modelSelection.instanceId })
+        .pipe(Effect.mapError(threadManagementFailure)))
+    ) {
+      return yield* failure(
+        "provider_unavailable",
+        `Provider ${modelSelection.instanceId} is not enabled for this project.`,
+      );
+    }
+    const afterLaunch = requested?.afterLaunch ?? prior?.afterLaunch;
+    return {
+      projectId,
+      destination: {
+        type: "new_thread" as const,
+        projectId,
+        workspaceStrategy,
+        modelSelection,
+        ...(afterLaunch === undefined ? {} : { afterLaunch }),
+      },
+    };
+  });
+
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
-      const { parent, limits } = yield* loadCaller(scope, ["runs"]);
-      const projectId = yield* resolveProjectTarget(parent, input.projectId);
-      yield* assertLiveCallerForOtherProject(scope, parent, projectId);
-      const project = yield* requireProject(projectId);
-      const bindToCurrentThread =
-        input.bindToCurrentThread ??
-        (parent !== undefined && parent.thread.projectId === projectId);
-      if (bindToCurrentThread && (parent === undefined || parent.thread.projectId !== projectId)) {
-        return yield* failure(
-          "invalid_request",
-          parent === undefined
-            ? "bindToCurrentThread needs an agent running inside a T3 thread."
-            : "bindToCurrentThread binds to this thread, which belongs to a different project.",
-        );
-      }
-      const modelSelection =
-        parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+      const caller = yield* loadCaller(scope, ["runs"]);
+      const { projectId, destination } = yield* resolveScheduledDestination(
+        scope,
+        caller,
+        input.destination,
+      );
+      const { parent, limits } = caller;
       // Never end on a lone high surrogate, which renders as a broken character.
       const derivedTitle = (input.prompt.split("\n")[0]?.trim() ?? "")
         .slice(0, 80)
@@ -2436,14 +2518,7 @@ const make = Effect.gen(function* () {
         enabled: input.enabled ?? true,
         schedule: input.schedule,
         projectId,
-        threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-        threadMode: input.freshSession
-          ? "fresh_session"
-          : bindToCurrentThread
-            ? "continue"
-            : "new_thread",
-        workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
-        modelSelection,
+        destination,
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         createdBy: "agent",
@@ -2497,62 +2572,38 @@ const make = Effect.gen(function* () {
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         if (
-          input.bindToCurrentThread === true &&
-          (parent === undefined || parent.thread.projectId !== existing.projectId)
+          input.trigger !== undefined &&
+          (existing.schedule.type === "webhook") !== (input.trigger === "webhook")
         ) {
           return yield* failure(
             "invalid_request",
-            parent === undefined
-              ? "bindToCurrentThread needs an agent running inside a T3 thread."
-              : "bindToCurrentThread binds to this thread, which belongs to a different project.",
+            existing.schedule.type === "webhook"
+              ? "Use wake_on_webhook to update a webhook trigger."
+              : "Use schedule_task to update a clock trigger.",
           );
         }
-        // A save keeps a bound thread unless the task goes back to new threads, so this pair
-        // would leave runs in the old thread.
-        if (
-          input.bindToCurrentThread === false &&
-          input.freshSession === true &&
-          existing.threadId !== null
-        ) {
-          return yield* failure(
-            "invalid_request",
-            "To move this task to a new thread with fresh sessions, first unbind it with bindToCurrentThread: false, then set freshSession: true in a second call.",
-          );
-        }
-        const threadId =
-          input.bindToCurrentThread === undefined
-            ? existing.threadId
-            : input.bindToCurrentThread && parent !== undefined
-              ? parent.thread.id
-              : null;
-        // Reset the workspace only when the binding flips, so unbinding cannot leave runs in the shared checkout.
-        const workspaceStrategy =
-          (threadId === null) === (existing.threadId === null)
-            ? existing.workspaceStrategy
-            : yield* scheduledTaskWorkspaceStrategy(threadId !== null, existing.projectId);
+        const changed =
+          input.destination === undefined
+            ? undefined
+            : yield* resolveScheduledDestination(
+                scope,
+                { parent, limits },
+                input.destination,
+                existing,
+              );
+        const schedule =
+          input.schedule?.type === "webhook" && existing.schedule.type === "webhook"
+            ? { ...existing.schedule, ...input.schedule }
+            : (input.schedule ?? existing.schedule);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           requireExisting: true,
           title: input.title ?? existing.title,
           prompt: input.prompt ?? existing.prompt,
           enabled: input.enabled ?? existing.enabled,
-          schedule: input.schedule ?? existing.schedule,
-          projectId: existing.projectId,
-          threadId,
-          threadMode:
-            input.freshSession === undefined && input.bindToCurrentThread === undefined
-              ? scheduledTaskThreadMode(existing)
-              : (input.freshSession ??
-                  (input.bindToCurrentThread !== false &&
-                    scheduledTaskThreadMode(existing) === "fresh_session"))
-                ? "fresh_session"
-                : threadId === null &&
-                    (input.bindToCurrentThread === false ||
-                      scheduledTaskThreadMode(existing) === "new_thread")
-                  ? "new_thread"
-                  : "continue",
-          workspaceStrategy,
-          modelSelection: existing.modelSelection,
+          schedule,
+          projectId: changed?.projectId ?? existing.projectId,
+          ...(changed === undefined ? {} : { destination: changed.destination }),
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,

@@ -1051,11 +1051,22 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
       enabled: false,
     });
     expect(allowed.isError).toBe(false);
-    const fresh = yield* call("schedule_task", {
+    const wrongTool = yield* call("wake_on_webhook", {
       scheduledTaskId: "task-auto",
-      freshSession: true,
+      enabled: false,
     });
-    expect(fresh.structuredContent).toMatchObject({ freshSession: true });
+    expect(declaredFailure(wrongTool)).toMatchObject({ code: "invalid_request" });
+    const list = yield* call("list_scheduled_tasks", { scheduledTaskId: "task-auto" });
+    expect(list.structuredContent).toMatchObject({
+      tasks: [
+        {
+          destination: {
+            type: "new_thread",
+            modelSelection: { instanceId: "codex", model: "gpt-5" },
+          },
+        },
+      ],
+    });
     const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
     expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
@@ -1208,10 +1219,13 @@ function scheduledTask(id: string, runtimeMode: "auto" | "full-access"): never {
     prompt: "Check the build",
     enabled: true,
     projectId: "project-a",
-    threadId: null,
     schedule: { type: "interval", everyMs: 3_600_000 },
-    workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
-    modelSelection: { instanceId: "codex", model: "gpt-5" },
+    destination: {
+      type: "new_thread",
+      projectId: "project-a",
+      workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+      modelSelection: { instanceId: "codex", model: "gpt-5" },
+    },
     runtimeMode,
     interactionMode: "default",
     createdBy: "user",

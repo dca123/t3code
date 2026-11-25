@@ -3912,9 +3912,12 @@ describe("OrchestratorMcpService provider resolution", () => {
       enabled: true,
       schedule: { type: "webhook", signature: null },
       projectId,
-      threadId: null,
-      workspaceStrategy: { type: "root" },
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      destination: {
+        type: "new_thread",
+        projectId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      },
       runtimeMode: "approval-required",
       interactionMode: "default",
       createdBy: "agent",
@@ -3978,7 +3981,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Effect.succeedSome({
                   id,
                   workspaceRoot: "/repo/scheduled",
-                  defaultModelSelection: saved.modelSelection,
+                  defaultModelSelection:
+                    saved.destination.type === "new_thread"
+                      ? saved.destination.modelSelection
+                      : { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
                 } as Project),
             }),
             Layer.mock(SecretRequests.SecretRequests)({}),
@@ -4038,7 +4044,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const created = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.flatMap((mcp) =>
             mcp.scheduleTask(supervisedClient, {
-              projectId,
+              destination: { type: "new_thread", projectId },
               prompt: hook.prompt,
               schedule: { type: "webhook" },
             }),
@@ -4062,7 +4068,9 @@ describe("OrchestratorMcpService provider resolution", () => {
     it.effect("checks a bound task against its thread's current modes", () =>
       Effect.gen(function* () {
         const upserted = yield* Ref.make(0);
-        const bound = task({ threadId: boundThreadId });
+        const bound = task({
+          destination: { type: "existing_thread", threadId: boundThreadId, session: "continue" },
+        });
         const layer = service(
           [bound],
           liveThreadShell(boundThreadId, { runtimeMode: "full-access" }),
@@ -4087,7 +4095,9 @@ describe("OrchestratorMcpService provider resolution", () => {
     it.effect("reports a saved task even when its bound thread cannot be read", () =>
       Effect.gen(function* () {
         const upserted = yield* Ref.make(0);
-        const bound = task({ threadId: boundThreadId });
+        const bound = task({
+          destination: { type: "existing_thread", threadId: boundThreadId, session: "continue" },
+        });
         const lookups = yield* Ref.make(0);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
@@ -4140,6 +4150,7 @@ describe("OrchestratorMcpService provider resolution", () => {
   });
 
   describe("the base branch of an unbound scheduled task", () => {
+    type NewThreadDestination = Extract<ScheduledTask["destination"], { type: "new_thread" }>;
     const projectId = ProjectId.make("project:scheduled-base");
     const workspaceRoot = "/repo/scheduled-base";
     const existing: ScheduledTask = {
@@ -4149,9 +4160,12 @@ describe("OrchestratorMcpService provider resolution", () => {
       enabled: true,
       schedule: { type: "interval", everyMs: 3_600_000 },
       projectId,
-      threadId: null,
-      workspaceStrategy: { type: "root" },
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      destination: {
+        type: "new_thread",
+        projectId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      },
       runtimeMode: "approval-required",
       interactionMode: "default",
       createdBy: "agent",
@@ -4163,7 +4177,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       lastRunStatus: "never",
       lastRunError: null,
       runCount: 0,
-    };
+    } satisfies ScheduledTask;
     const client: McpInvocationScope = {
       environmentId: EnvironmentId.make("environment:scheduled-base"),
       requestNamespace: "client:scheduled-base",
@@ -4178,13 +4192,13 @@ describe("OrchestratorMcpService provider resolution", () => {
     };
     const service = (
       git: Partial<GitVcsDriver.GitVcsDriver["Service"]>,
-      saved: Ref.Ref<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>,
+      saved: Ref.Ref<ReadonlyArray<NewThreadDestination["workspaceStrategy"]>>,
       task: ScheduledTask = existing,
       inputs?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput>>,
       defaults: {
-        readonly project: ScheduledTask["modelSelection"] | null;
-        readonly environment?: ScheduledTask["modelSelection"];
-      } = { project: existing.modelSelection },
+        readonly project: NewThreadDestination["modelSelection"] | null;
+        readonly environment?: NewThreadDestination["modelSelection"];
+      } = { project: existing.destination.modelSelection ?? null },
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -4218,7 +4232,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks: [task] }),
               upsert: (input) =>
-                Ref.update(saved, (strategies) => [...strategies, input.workspaceStrategy]).pipe(
+                Ref.update(saved, (strategies) =>
+                  input.destination?.type === "new_thread"
+                    ? [...strategies, input.destination.workspaceStrategy]
+                    : strategies,
+                ).pipe(
                   Effect.andThen(
                     inputs === undefined
                       ? Effect.void
@@ -4240,11 +4258,15 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     it.effect("starts from the project's default branch", () =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<NewThreadDestination["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(service(masterRepository, saved)),
         );
-        yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
+        yield* mcp.scheduleTask(client, {
+          destination: { type: "new_thread", projectId },
+          prompt: "Check the build",
+          schedule,
+        });
         assert.deepEqual(yield* Ref.get(saved), [
           { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
         ]);
@@ -4262,7 +4284,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           Effect.provide(
             service(
               masterRepository,
-              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              yield* Ref.make<ReadonlyArray<NewThreadDestination["workspaceStrategy"]>>([]),
               cronTask,
             ),
           ),
@@ -4299,16 +4321,22 @@ describe("OrchestratorMcpService provider resolution", () => {
           Effect.provide(
             service(
               masterRepository,
-              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              yield* Ref.make<ReadonlyArray<NewThreadDestination["workspaceStrategy"]>>([]),
               existing,
               inputs,
               { project: null, environment: environmentDefault },
             ),
           ),
         );
-        yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
+        yield* mcp.scheduleTask(client, {
+          destination: { type: "new_thread", projectId },
+          prompt: "Check the build",
+          schedule,
+        });
         assert.deepEqual(
-          (yield* Ref.get(inputs)).map((input) => input.modelSelection),
+          (yield* Ref.get(inputs)).map((input) =>
+            input.destination?.type === "new_thread" ? input.destination.modelSelection : undefined,
+          ),
           [environmentDefault],
         );
       }),
@@ -4332,13 +4360,17 @@ describe("OrchestratorMcpService provider resolution", () => {
           Effect.provide(
             service(
               masterRepository,
-              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              yield* Ref.make<ReadonlyArray<NewThreadDestination["workspaceStrategy"]>>([]),
               existing,
               inputs,
             ),
           ),
         );
-        yield* mcp.scheduleTask(client, { projectId, prompt, schedule });
+        yield* mcp.scheduleTask(client, {
+          destination: { type: "new_thread", projectId },
+          prompt,
+          schedule,
+        });
         assert.deepEqual(
           (yield* Ref.get(inputs)).map((input) => input.title),
           [title],
@@ -4346,80 +4378,24 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
-    it.effect("keeps one thread when fresh sessions are turned off before the first run", () =>
-      Effect.gen(function* () {
-        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
-        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(
-            service(
-              masterRepository,
-              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
-              { ...existing, threadMode: "fresh_session" },
-              inputs,
-            ),
-          ),
-        );
-        yield* mcp.updateScheduledTask(client, {
-          scheduledTaskId: existing.id,
-          freshSession: false,
-        });
-        yield* mcp.updateScheduledTask(client, {
-          scheduledTaskId: existing.id,
-          bindToCurrentThread: false,
-        });
-        assert.deepEqual(
-          (yield* Ref.get(inputs)).map((input) => input.threadMode),
-          ["continue", "new_thread"],
-        );
-      }),
-    );
-
-    it.effect(
-      "refuses unbinding into fresh sessions in one call, which would keep the thread",
-      () =>
-        Effect.gen(function* () {
-          const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
-          const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-            Effect.provide(
-              service(
-                masterRepository,
-                yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
-                {
-                  ...existing,
-                  threadId: ThreadId.make("thread:scheduled-base"),
-                  threadMode: "continue",
-                },
-                inputs,
-              ),
-            ),
-          );
-          const refused = yield* mcp
-            .updateScheduledTask(client, {
-              scheduledTaskId: existing.id,
-              bindToCurrentThread: false,
-              freshSession: true,
-            })
-            .pipe(Effect.flip);
-          assert.include(refused.message, "first unbind it");
-          assert.deepEqual(yield* Ref.get(inputs), []);
-        }),
-    );
-
     it.effect("follows the default branch when a task is unbound from its thread", () =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<NewThreadDestination["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
             service(masterRepository, saved, {
               ...existing,
-              threadId: ThreadId.make("thread:scheduled-base"),
-              threadMode: "continue",
+              destination: {
+                type: "existing_thread",
+                threadId: ThreadId.make("thread:scheduled-base"),
+                session: "continue",
+              },
             }),
           ),
         );
         yield* mcp.updateScheduledTask(client, {
           scheduledTaskId: existing.id,
-          bindToCurrentThread: false,
+          destination: { type: "new_thread" },
         });
         assert.deepEqual(yield* Ref.get(saved), [
           { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
@@ -4429,13 +4405,13 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     it.effect("keeps the saved workspace when an unbound task stays unbound", () =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<NewThreadDestination["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(service(masterRepository, saved)),
         );
         yield* mcp.updateScheduledTask(client, {
           scheduledTaskId: existing.id,
-          bindToCurrentThread: false,
+          destination: { type: "new_thread" },
         });
         assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
       }),
@@ -4514,7 +4490,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       },
     ])("$name starts from $baseRef", ({ remote, remoteDefault, refs, baseRef }) =>
       Effect.gen(function* () {
-        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const saved = yield* Ref.make<ReadonlyArray<NewThreadDestination["workspaceStrategy"]>>([]);
         const gitFailure = (cwd: string, detail: string) =>
           new GitCommandError({ operation: "GitVcsDriver.test", command: "git", cwd, detail });
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
@@ -4535,7 +4511,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             ),
           ),
         );
-        yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
+        yield* mcp.scheduleTask(client, {
+          destination: { type: "new_thread", projectId },
+          prompt: "Check the build",
+          schedule,
+        });
         assert.deepEqual(yield* Ref.get(saved), [
           { type: "worktree", baseRef, startFromOrigin: true },
         ]);

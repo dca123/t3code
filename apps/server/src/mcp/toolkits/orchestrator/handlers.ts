@@ -1,4 +1,9 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import {
+  OrchestratorMcpFailure,
+  type OrchestratorMcpSaveScheduledTaskInput,
+  type OrchestratorMcpWakeOnWebhookInput,
+  type ScheduledTaskUpsertSchedule,
+} from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
@@ -11,6 +16,43 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+
+type TriggerSaveInput = typeof OrchestratorMcpSaveScheduledTaskInput.Type;
+
+function saveTrigger<Input extends Omit<TriggerSaveInput, "schedule">>(
+  trigger: "clock" | "webhook",
+  scheduleOf: (input: Input) => ScheduledTaskUpsertSchedule | undefined,
+) {
+  const save = Effect.fn("OrchestratorToolkit.saveTrigger")(function* (input: Input) {
+    const { scheduledTaskId, prompt, ...fields } = input;
+    const schedule = scheduleOf(input);
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    if (scheduledTaskId !== undefined) {
+      return yield* service.updateScheduledTask(scope, {
+        ...fields,
+        scheduledTaskId,
+        prompt,
+        schedule,
+        trigger,
+      });
+    }
+    if (prompt === undefined || schedule === undefined) {
+      return yield* new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message: `A new ${trigger} trigger needs a prompt and ${trigger === "clock" ? "schedule" : "webhook settings"}.`,
+      });
+    }
+    return yield* service.scheduleTask(scope, { ...fields, prompt, schedule });
+  });
+  return McpToolAccess.either(
+    (input: Input) => input.scheduledTaskId === undefined,
+    McpToolAccess.startsThreads(() => ({}), save, {
+      refused: "create triggers in this environment",
+    }),
+    McpToolAccess.writes(save),
+  );
+}
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads((input) =>
@@ -86,42 +128,11 @@ const handlers = {
         );
     }),
   ),
-  schedule_task: McpToolAccess.either(
-    (input) => input.scheduledTaskId === undefined,
-    McpToolAccess.startsThreads(
-      () => ({}),
-      ({ prompt, schedule, ...input }) =>
-        Effect.gen(function* () {
-          if (prompt === undefined || schedule === undefined) {
-            return yield* new OrchestratorMcpFailure({
-              code: "invalid_request",
-              message: "A new scheduled task needs `prompt` and `schedule`.",
-            });
-          }
-          const scope = yield* McpInvocationContext.McpInvocationContext;
-          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          return yield* service.scheduleTask(scope, { ...input, prompt, schedule });
-        }),
-      // A scheduled run starts long after its caller, with nothing to carry the link.
-      { refused: "schedule tasks in this environment" },
-    ),
-    McpToolAccess.writes(
-      ({ scheduledTaskId, prompt, title, schedule, enabled, freshSession, bindToCurrentThread }) =>
-        Effect.gen(function* () {
-          if (scheduledTaskId === undefined) return yield* Effect.die("unreachable");
-          const scope = yield* McpInvocationContext.McpInvocationContext;
-          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          return yield* service.updateScheduledTask(scope, {
-            scheduledTaskId,
-            prompt,
-            title,
-            schedule,
-            enabled,
-            freshSession,
-            bindToCurrentThread,
-          });
-        }),
-    ),
+  schedule_task: saveTrigger("clock", (input: TriggerSaveInput) => input.schedule),
+  wake_on_webhook: saveTrigger("webhook", (input: typeof OrchestratorMcpWakeOnWebhookInput.Type) =>
+    input.webhook === undefined && input.scheduledTaskId !== undefined
+      ? undefined
+      : { type: "webhook", ...input.webhook },
   ),
   list_scheduled_tasks: McpToolAccess.reads((input) =>
     Effect.gen(function* () {

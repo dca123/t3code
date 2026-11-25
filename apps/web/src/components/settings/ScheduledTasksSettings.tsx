@@ -20,13 +20,11 @@ import type {
   EnvironmentId,
   ModelSelection,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
-  ProjectId,
   ScheduledTask,
   ScheduledTaskId,
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliverySummary,
-  ThreadId,
 } from "@t3tools/contracts";
 import {
   DEFAULT_WEBHOOK_PROMPT,
@@ -42,9 +40,10 @@ import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
+  ProjectId,
+  ThreadId,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
-  scheduledTaskThreadMode,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -196,7 +195,6 @@ const EMPTY_DRAFT: DraftState = {
   cronTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   projectId: "",
   threadId: "",
-  savedThreadId: "",
   threadMode: "new_thread",
   workspaceMode: "worktree",
   baseRef: "",
@@ -874,8 +872,11 @@ function ScheduledTaskRow({
               {messages(RUN_STATUS_LABELS[task.lastRunStatus])}
             </Badge>
           ) : null}
-          {task.threadId !== null && scheduledTaskThreadMode(task) !== "new_thread" ? (
-            <ScheduledTaskThreadLink environmentId={environmentId} threadId={task.threadId} />
+          {task.destination.type === "existing_thread" ? (
+            <ScheduledTaskThreadLink
+              environmentId={environmentId}
+              threadId={task.destination.threadId}
+            />
           ) : null}
           {task.lastRunError ? <span className="text-destructive">{task.lastRunError}</span> : null}
         </div>
@@ -1547,7 +1548,8 @@ function ScheduledTaskEditorForm({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
-  const automaticBaseRef = draft.workspaceMode === "worktree" && !draft.baseRef.trim();
+  const automaticBaseRef =
+    !draft.threadId && draft.workspaceMode === "worktree" && !draft.baseRef.trim();
   const automaticBaseRefs = usePaginatedBranches({
     environmentId,
     cwd: automaticBaseRef ? (selectedProject?.workspaceRoot ?? null) : null,
@@ -1575,17 +1577,8 @@ function ScheduledTaskEditorForm({
       : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
-  const activeModel = activeSelection?.model ?? "";
-  const boundThread = useScheduledTaskThread(
-    environmentId,
-    draft.threadId ? (draft.threadId as ThreadId) : null,
-  );
-  // Bound runs use the thread's current model, so the locked picker shows that one.
-  const shownSelection = draft.threadId
-    ? (boundThread?.modelSelection ?? null)
-    : { instanceId: activeInstanceId, model: activeModel };
-  const shownInstanceId = shownSelection?.instanceId ?? activeInstanceId;
-  const shownModel = shownSelection?.model ?? "";
+  const shownInstanceId = activeInstanceId;
+  const shownModel = activeSelection?.model ?? "";
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -1620,7 +1613,7 @@ function ScheduledTaskEditorForm({
       !draft.title.trim() ||
       !draft.prompt.trim() ||
       !projects.some((project) => project.id === selectedProjectId) ||
-      selection === null
+      (!draft.threadId && selection === null)
     ) {
       reportFailure(
         gt("Scheduled task is incomplete"),
@@ -1664,7 +1657,11 @@ function ScheduledTaskEditorForm({
       );
       return;
     }
-    if (draft.workspaceMode === "existing_worktree" && !draft.existingWorktreePath.trim()) {
+    if (
+      !draft.threadId &&
+      draft.workspaceMode === "existing_worktree" &&
+      !draft.existingWorktreePath.trim()
+    ) {
       reportFailure(
         gt("Checkout path is required"),
         gt("Enter the path of the checkout to run in."),
@@ -1672,6 +1669,7 @@ function ScheduledTaskEditorForm({
       return;
     }
     const modelSelection =
+      selection !== null &&
       draft.baseModelSelection !== null &&
       draft.baseModelSelection.instanceId === selection.instanceId &&
       draft.baseModelSelection.model === selection.model
@@ -1687,18 +1685,34 @@ function ScheduledTaskEditorForm({
               baseRef: worktreeBaseRef,
               startFromOrigin: draft.startFromOrigin,
             };
+    const projectId = ProjectId.make(selectedProjectId);
+    const destination = draft.threadId
+      ? {
+          type: "existing_thread" as const,
+          threadId: ThreadId.make(draft.threadId),
+          session:
+            draft.threadMode === "fresh_session"
+              ? ("fresh_session" as const)
+              : ("continue" as const),
+        }
+      : modelSelection === null
+        ? undefined
+        : {
+            type: "new_thread" as const,
+            projectId,
+            workspaceStrategy,
+            modelSelection,
+            ...(draft.threadMode === "new_thread" ? {} : { afterLaunch: draft.threadMode }),
+          };
+    if (destination === undefined) return;
     const input: ScheduledTaskUpsertInput = {
       ...(draft.editingId ? { id: draft.editingId as ScheduledTaskId, requireExisting: true } : {}),
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       enabled: draft.enabled,
       schedule,
-      projectId: selectedProjectId as ProjectId,
-      threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
-      ...(draft.threadId === "" && draft.savedThreadId !== "" ? { unbindThread: true } : {}),
-      ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
-      workspaceStrategy,
-      modelSelection,
+      projectId,
+      destination,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
       runtimeMode:
         clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, draft.runtimeMode) ??
@@ -1881,32 +1895,36 @@ function ScheduledTaskEditorForm({
               </Select>
             </Field>
 
-            <Field label={gt("Workspace")} htmlFor="scheduled-task-workspace">
-              <Select
-                value={draft.workspaceMode}
-                onValueChange={(value) =>
-                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
-                }
-              >
-                <SelectTrigger size="sm" id="scheduled-task-workspace">
-                  <SelectValue>{messages(WORKSPACE_MODE_LABELS[draft.workspaceMode])}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  <SelectItem value="worktree">
-                    <T>Create a new worktree</T>
-                  </SelectItem>
-                  <SelectItem value="root">
-                    <T>Use the project checkout</T>
-                  </SelectItem>
-                  <SelectItem value="existing_worktree">
-                    <T>Use a specific checkout</T>
-                  </SelectItem>
-                </SelectPopup>
-              </Select>
-            </Field>
+            {!draft.threadId ? (
+              <Field label={gt("Workspace")} htmlFor="scheduled-task-workspace">
+                <Select
+                  value={draft.workspaceMode}
+                  onValueChange={(value) =>
+                    setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
+                  }
+                >
+                  <SelectTrigger size="sm" id="scheduled-task-workspace">
+                    <SelectValue>
+                      {messages(WORKSPACE_MODE_LABELS[draft.workspaceMode])}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="worktree">
+                      <T>Create a new worktree</T>
+                    </SelectItem>
+                    <SelectItem value="root">
+                      <T>Use the project checkout</T>
+                    </SelectItem>
+                    <SelectItem value="existing_worktree">
+                      <T>Use a specific checkout</T>
+                    </SelectItem>
+                  </SelectPopup>
+                </Select>
+              </Field>
+            ) : null}
           </div>
 
-          {draft.workspaceMode === "worktree" ? (
+          {!draft.threadId && draft.workspaceMode === "worktree" ? (
             <Field label={gt("Base branch")} htmlFor="scheduled-task-base-ref">
               <WorktreeBaseBranchPicker
                 key={`${environmentId}:${selectedProjectId}`}
@@ -1923,7 +1941,7 @@ function ScheduledTaskEditorForm({
               />
             </Field>
           ) : null}
-          {draft.workspaceMode === "existing_worktree" ? (
+          {!draft.threadId && draft.workspaceMode === "existing_worktree" ? (
             <Field label={gt("Checkout path")} htmlFor="scheduled-task-checkout">
               <Input
                 id="scheduled-task-checkout"
@@ -1954,25 +1972,26 @@ function ScheduledTaskEditorForm({
             />
           </Field>
 
-          <Field label={gt("Model")}>
-            <div>
-              <ProviderModelPicker
-                environmentId={environmentId}
-                // The saved selection only seeds new threads; bound runs ignore it.
-                disabled={saving || !connected || draft.threadId !== ""}
-                activeInstanceId={shownInstanceId}
-                model={shownModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
-            </div>
-          </Field>
+          {!draft.threadId ? (
+            <Field label={gt("Model")}>
+              <div>
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  disabled={saving || !connected}
+                  activeInstanceId={shownInstanceId}
+                  model={shownModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                  }
+                />
+              </div>
+            </Field>
+          ) : null}
 
           <div className="space-y-3">
             {task?.schedule.type === "interval" &&

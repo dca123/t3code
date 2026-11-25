@@ -129,10 +129,10 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         (context_transfer_id, source_thread_id, target_thread_id, type, status, updated_at, payload_json)
         VALUES ('transfer-1', 'archived-thread', 'stopped-thread', 'provider_handoff', 'completed', '2026-08-01', '{}')`;
       yield* sql`INSERT INTO scheduled_tasks
-        (task_id, title, prompt, enabled, schedule_json, project_id, workspace_strategy_json,
-          model_selection_json, runtime_mode, interaction_mode, created_by, creation_source,
+        (task_id, title, prompt, enabled, schedule_json, project_id, destination_json,
+          runtime_mode, interaction_mode, created_by, creation_source,
           created_at, updated_at, last_run_status, run_count)
-        VALUES ('task-1', 'Nightly', 'Run it', 1, '{}', 'project-kept', '{}', '{}',
+        VALUES ('task-1', 'Nightly', 'Run it', 1, '{}', 'project-kept', '{}',
           'full-access', 'default', 'user', 'user', '2026-08-01', '2026-08-01', 'never', 0)`;
       yield* sql`INSERT INTO scheduled_task_webhook_replay_keys
         (task_id, replay_key, delivery_id, expires_at)

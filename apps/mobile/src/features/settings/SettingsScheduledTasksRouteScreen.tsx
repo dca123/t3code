@@ -19,7 +19,6 @@ import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
-  scheduledTaskThreadMode,
 } from "@t3tools/contracts";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -87,11 +86,7 @@ import {
   type ScheduledTaskDraft as Draft,
 } from "./scheduledTaskDraft";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
-import {
-  useScheduledTaskDestinationLabel,
-  useScheduledTaskEditor,
-  useScheduledTaskThread,
-} from "./scheduled-task-editor";
+import { useScheduledTaskDestinationLabel, useScheduledTaskEditor } from "./scheduled-task-editor";
 import {
   discardScheduledTaskEditor,
   markScheduledTaskEditorSaved,
@@ -755,7 +750,8 @@ function TaskForm({
           project.id === draft.task?.projectId),
     )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
-  const automaticBaseRef = draft.workspace === "worktree" && !draft.baseRef.trim();
+  const automaticBaseRef =
+    draft.threadId === null && draft.workspace === "worktree" && !draft.baseRef.trim();
   const automaticBaseRefCwd = automaticBaseRef
     ? (projects.find((project) => project.id === draft.projectId)?.workspaceRoot ?? null)
     : null;
@@ -772,10 +768,7 @@ function TaskForm({
     automaticBaseRefs.error === null;
   const config = useEnvironmentServerConfig(environmentId);
   const destinationLabel = useScheduledTaskDestinationLabel(environmentId, draft.threadId);
-  const boundThread = useScheduledTaskThread(environmentId, draft.threadId);
-  // Bound runs use the thread's current model, so the locked row shows that one.
-  const shownSelection =
-    draft.threadId === null ? draft.modelSelection : (boundThread?.modelSelection ?? null);
+  const shownSelection = draft.modelSelection;
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
   // Existing webhook tasks keep the option so they can still switch to a timer.
   const webhookDenial = managedCapabilityDenial(config?.managedPolicy, "webhookTasks", m);
@@ -869,9 +862,11 @@ function TaskForm({
       !draft.title.trim() ||
       !draft.prompt.trim() ||
       !draft.projectId ||
-      !draft.modelSelection ||
+      (draft.threadId === null && draft.modelSelection === null) ||
       !schedule ||
-      (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
+      (draft.threadId === null &&
+        draft.workspace === "existing_worktree" &&
+        !draft.checkoutPath.trim())
     ) {
       Dialog.alert(
         gt("Incomplete task"),
@@ -883,27 +878,49 @@ function TaskForm({
       Dialog.alert(gt("Project unavailable"), gt("Choose a project in this environment."));
       return;
     }
+    const destination =
+      draft.threadId !== null
+        ? {
+            type: "existing_thread" as const,
+            threadId: draft.threadId,
+            session:
+              draft.threadMode === "fresh_session"
+                ? ("fresh_session" as const)
+                : ("continue" as const),
+          }
+        : draft.modelSelection === null
+          ? undefined
+          : {
+              type: "new_thread" as const,
+              projectId: draft.projectId,
+              modelSelection: withImplicitFastModeSelection(
+                draft.modelSelection,
+                config?.providers ?? [],
+              ),
+              ...(draft.threadMode === "new_thread" ? {} : { afterLaunch: draft.threadMode }),
+              workspaceStrategy:
+                draft.workspace === "root"
+                  ? { type: "root" as const }
+                  : draft.workspace === "existing_worktree"
+                    ? {
+                        type: "existing_worktree" as const,
+                        worktreePath: draft.checkoutPath.trim(),
+                      }
+                    : {
+                        type: "worktree" as const,
+                        baseRef: worktreeBaseRef,
+                        startFromOrigin: draft.startFromOrigin,
+                      },
+            };
+    if (destination === undefined) return;
     const input: ScheduledTaskUpsertInput = {
       ...(draft.task ? { id: draft.task.id, requireExisting: true } : {}),
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       projectId: draft.projectId,
-      modelSelection: withImplicitFastModeSelection(draft.modelSelection, config?.providers ?? []),
+      destination,
       schedule,
       enabled: draft.enabled,
-      threadId: draft.threadId,
-      ...(draft.threadId === null && draft.task?.threadId != null ? { unbindThread: true } : {}),
-      ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
-      workspaceStrategy:
-        draft.workspace === "root"
-          ? { type: "root" }
-          : draft.workspace === "existing_worktree"
-            ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
-            : {
-                type: "worktree",
-                baseRef: worktreeBaseRef,
-                startFromOrigin: draft.startFromOrigin,
-              },
       // Tasks have no mode picker; a mode above the administrator's ceiling is refused.
       runtimeMode:
         clampManagedRuntimeMode(config?.managedPolicy, draft.runtimeMode) ?? draft.runtimeMode,
@@ -1017,24 +1034,23 @@ function TaskForm({
               });
             }}
           />
-          <PickerRow
-            label={gt("Model")}
-            borderTop
-            value={
-              modelOptions.find(
-                (option) =>
-                  option.selection.instanceId === shownSelection?.instanceId &&
-                  option.selection.model === shownSelection?.model,
-              )?.label ??
-              shownSelection?.model ??
-              (modelOptions.length ? gt("Choose model") : gt("No models available"))
-            }
-            onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
-            // The saved selection only seeds new threads; bound runs ignore it.
-            disabled={
-              saving || dictationPending || environmentUnavailable || draft.threadId !== null
-            }
-          />
+          {draft.threadId === null ? (
+            <PickerRow
+              label={gt("Model")}
+              borderTop
+              value={
+                modelOptions.find(
+                  (option) =>
+                    option.selection.instanceId === shownSelection?.instanceId &&
+                    option.selection.model === shownSelection?.model,
+                )?.label ??
+                shownSelection?.model ??
+                (modelOptions.length ? gt("Choose model") : gt("No models available"))
+              }
+              onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
+              disabled={saving || dictationPending || environmentUnavailable}
+            />
+          ) : null}
         </SettingsSection>
 
         <SettingsSection
@@ -1091,69 +1107,71 @@ function TaskForm({
           ) : null}
         </SettingsSection>
 
-        <SettingsSection title={gt("Workspace")}>
-          <SelectRow
-            label={gt("Run in")}
-            value={
-              draft.workspace === "worktree"
-                ? gt("New worktree")
-                : draft.workspace === "root"
-                  ? gt("Project checkout")
-                  : gt("Specific checkout")
-            }
-            actions={[
-              {
-                id: "worktree",
-                title: gt("New worktree"),
-                state: draft.workspace === "worktree" ? "on" : undefined,
-              },
-              {
-                id: "root",
-                title: gt("Project checkout"),
-                state: draft.workspace === "root" ? "on" : undefined,
-              },
-              {
-                id: "existing_worktree",
-                title: gt("Specific checkout"),
-                state: draft.workspace === "existing_worktree" ? "on" : undefined,
-              },
-            ]}
-            onSelect={(id) => {
-              if (id === "worktree" || id === "root" || id === "existing_worktree")
-                setDraft((current) => ({ ...current, workspace: id }));
-            }}
-          />
-          {draft.workspace === "worktree" ? (
-            <PickerRow
-              label={gt("Base branch")}
-              value={resolveNewTaskBranchLabel(
-                {
-                  branchName: automaticBaseRefLoading ? null : worktreeBaseRef,
-                  startFromOrigin: draft.startFromOrigin,
-                  workspaceMode: "worktree",
-                },
-                m,
-              )}
-              borderTop
-              disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
-              onPress={() => navigation.navigate("SettingsScheduledTaskBranch")}
-            />
-          ) : null}
-          {draft.workspace === "existing_worktree" ? (
-            <FormField
-              label={gt("Checkout path")}
-              disabled={saving}
-              value={draft.checkoutPath}
-              borderTop
-              onChange={(checkoutPath) =>
-                setEnvironmentDraft((current) => ({
-                  ...current,
-                  checkoutPath: resolvePastedPath(current.checkoutPath, checkoutPath),
-                }))
+        {draft.threadId === null ? (
+          <SettingsSection title={gt("Workspace")}>
+            <SelectRow
+              label={gt("Run in")}
+              value={
+                draft.workspace === "worktree"
+                  ? gt("New worktree")
+                  : draft.workspace === "root"
+                    ? gt("Project checkout")
+                    : gt("Specific checkout")
               }
+              actions={[
+                {
+                  id: "worktree",
+                  title: gt("New worktree"),
+                  state: draft.workspace === "worktree" ? "on" : undefined,
+                },
+                {
+                  id: "root",
+                  title: gt("Project checkout"),
+                  state: draft.workspace === "root" ? "on" : undefined,
+                },
+                {
+                  id: "existing_worktree",
+                  title: gt("Specific checkout"),
+                  state: draft.workspace === "existing_worktree" ? "on" : undefined,
+                },
+              ]}
+              onSelect={(id) => {
+                if (id === "worktree" || id === "root" || id === "existing_worktree")
+                  setDraft((current) => ({ ...current, workspace: id }));
+              }}
             />
-          ) : null}
-        </SettingsSection>
+            {draft.workspace === "worktree" ? (
+              <PickerRow
+                label={gt("Base branch")}
+                value={resolveNewTaskBranchLabel(
+                  {
+                    branchName: automaticBaseRefLoading ? null : worktreeBaseRef,
+                    startFromOrigin: draft.startFromOrigin,
+                    workspaceMode: "worktree",
+                  },
+                  m,
+                )}
+                borderTop
+                disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
+                onPress={() => navigation.navigate("SettingsScheduledTaskBranch")}
+              />
+            ) : null}
+            {draft.workspace === "existing_worktree" ? (
+              <FormField
+                label={gt("Checkout path")}
+                disabled={saving}
+                value={draft.checkoutPath}
+                borderTop
+                onChange={(checkoutPath) =>
+                  setEnvironmentDraft((current) => ({
+                    ...current,
+                    checkoutPath: resolvePastedPath(current.checkoutPath, checkoutPath),
+                  }))
+                }
+              />
+            ) : null}
+          </SettingsSection>
+        ) : null}
 
         <SettingsSection title={gt("Schedule", { $context: "noun, section heading" })}>
           <View className="px-4 py-3">
@@ -1363,10 +1381,10 @@ function TaskForm({
               />
               <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
                 <Text textRole="body" className="min-w-0 flex-1 text-foreground">
-                  Stop after first matching request
+                  {gt("Stop after first matching request")}
                 </Text>
                 <ThemedSwitch
-                  accessibilityLabel="Stop after first matching request"
+                  accessibilityLabel={gt("Stop after first matching request")}
                   value={draft.schedule.fireOnce}
                   onValueChange={(fireOnce) =>
                     setDraft((current) => ({
@@ -1749,7 +1767,7 @@ function EnvironmentTasks({
             <Menu
               actions={[
                 { id: "edit", title: gt("Edit") },
-                ...(task.threadId !== null && scheduledTaskThreadMode(task) !== "new_thread"
+                ...(task.destination.type === "existing_thread"
                   ? [{ id: "thread", title: gt("Open thread") }]
                   : []),
                 {
@@ -1770,12 +1788,12 @@ function EnvironmentTasks({
                 const action = nativeEvent.event;
                 if (action === "edit") {
                   onEdit(task);
-                } else if (action === "thread" && task.threadId !== null) {
+                } else if (action === "thread" && task.destination.type === "existing_thread") {
                   selectDetail({
                     name: "Thread",
                     params: {
                       environmentId: String(environmentId),
-                      threadId: String(task.threadId),
+                      threadId: String(task.destination.threadId),
                     },
                   });
                 } else if (action === "delete") {

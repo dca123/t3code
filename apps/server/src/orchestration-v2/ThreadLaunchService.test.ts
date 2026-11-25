@@ -421,9 +421,10 @@ it.effect.each(
         enabled: false,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId,
-        threadId: existing?.threadId ?? null,
-        workspaceStrategy: { type: "root" },
-        modelSelection,
+        destination:
+          existing === null
+            ? { type: "new_thread", projectId, modelSelection, workspaceStrategy: { type: "root" } }
+            : { type: "existing_thread", threadId: existing.threadId, session: "continue" },
         runtimeMode: "full-access",
         interactionMode: "default",
         createdBy,
@@ -483,9 +484,7 @@ it.effect(
         enabled: false,
         schedule: { type: "interval", everyMs: 60_000 },
         projectId,
-        threadId,
-        workspaceStrategy: { type: "root" },
-        modelSelection,
+        destination: { type: "existing_thread", threadId, session: "continue" },
         runtimeMode: "full-access",
         interactionMode: "default",
         createdBy: "user",
@@ -499,7 +498,11 @@ it.effect(
       const result = yield* tasks.runNow({ id: task.id });
       assert.equal(result.task.lastRunStatus, "failed");
       assert.isNull(result.threadId);
-      assert.equal(result.task.threadId, threadId);
+      assert.deepEqual(result.task.destination, {
+        type: "existing_thread",
+        threadId,
+        session: "continue",
+      });
     }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
   },
 );
@@ -574,9 +577,7 @@ it.effect("runs a thread-bound automation on the provider the thread uses now", 
       enabled: false,
       schedule: { type: "interval", everyMs: 3_600_000 },
       projectId,
-      threadId: launched.threadId,
-      workspaceStrategy: { type: "root" },
-      modelSelection,
+      destination: { type: "existing_thread", threadId: launched.threadId, session: "continue" },
       runtimeMode: "full-access",
       interactionMode: "default",
       createdBy: "agent",
@@ -1312,9 +1313,12 @@ function scheduledTaskInput(id: string, targetProjectId: ProjectId) {
     enabled: false,
     schedule: { type: "interval" as const, everyMs: 60_000 },
     projectId: targetProjectId,
-    threadId: null,
-    workspaceStrategy: worktreeStrategy,
-    modelSelection,
+    destination: {
+      type: "new_thread" as const,
+      projectId: targetProjectId,
+      workspaceStrategy: worktreeStrategy,
+      modelSelection,
+    },
     runtimeMode: "full-access" as const,
     interactionMode: "default" as const,
   };
@@ -1387,11 +1391,18 @@ it.effect.each([true, false])(
       const plain = yield* tasks.upsert(
         scheduledTaskInput("scheduled-task:plain-upsert", projectId),
       );
-      assert.deepEqual(plain.task.workspaceStrategy, { type: "root" });
+      assert.include(plain.task.destination, { type: "new_thread" });
+      assert.deepEqual(
+        plain.task.destination.type === "new_thread" && plain.task.destination.workspaceStrategy,
+        { type: "root" },
+      );
       const git = yield* tasks.upsert(
         scheduledTaskInput("scheduled-task:git-upsert", otherProjectId),
       );
-      assert.deepEqual(git.task.workspaceStrategy, worktreeStrategy);
+      assert.deepEqual(
+        git.task.destination.type === "new_thread" && git.task.destination.workspaceStrategy,
+        worktreeStrategy,
+      );
     }).pipe(Effect.provide(harness.layer));
   },
 );
@@ -1408,7 +1419,7 @@ it.effect("runs a Scratch scheduled task saved with a worktree in its own folder
     // Tasks saved before Scratch was coerced still hold a worktree strategy.
     yield* sql`
       UPDATE scheduled_tasks
-      SET workspace_strategy_json = ${JSON.stringify(worktreeStrategy)}
+      SET destination_json = json_set(destination_json, '$.workspaceStrategy', json(${JSON.stringify(worktreeStrategy)}))
       WHERE task_id = ${task.id}
     `;
     const ran = yield* tasks.runNow({ id: task.id });

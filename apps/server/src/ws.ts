@@ -37,6 +37,7 @@ import {
   AuthProvidersManageScope,
   type AuthEnvironmentScope,
   type ScheduledTaskListResult,
+  type ScheduledTaskMutationResult,
   WorkflowRequestError,
   AuthSessionId,
   ClientConnectionMethod,
@@ -1631,6 +1632,8 @@ export const layerWsRpc = (
               ...result,
               tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
             };
+      const taskForSettings = ({ task }: ScheduledTaskMutationResult) =>
+        scheduledTasks.toSettingsRpc(task).pipe(Effect.map((task) => ({ task })));
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
@@ -2399,11 +2402,20 @@ export const layerWsRpc = (
           workflowDefinitions.save(input.name, input.source),
         [WS_METHODS.workflowsDeleteDefinition]: (input) => workflowDefinitions.remove(input.name),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
-          scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
-        [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
+          scheduledTasks.subscribeList().pipe(
+            Stream.map(withVisibleWebhookUrls),
+            Stream.mapEffect((result) =>
+              Effect.forEach(result.tasks, scheduledTasks.toSettingsRpc).pipe(
+                Effect.map((tasks) => ({ ...result, tasks })),
+              ),
+            ),
+          ),
+        [WS_METHODS.scheduledTasksUpsert]: (input) =>
+          scheduledTasks.upsertFromClient(input).pipe(Effect.flatMap(taskForSettings)),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.setEnabled(input)),
+            Effect.flatMap(taskForSettings),
           ),
         [WS_METHODS.scheduledTasksDelete]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
@@ -2412,10 +2424,12 @@ export const layerWsRpc = (
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.runNow(input)),
+            Effect.flatMap(taskForSettings),
           ),
         [WS_METHODS.scheduledTasksRotateWebhookToken]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.rotateWebhookToken(input)),
+            Effect.flatMap(taskForSettings),
           ),
         [WS_METHODS.guestShareCreate]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(

@@ -87,8 +87,9 @@ branch name remains.
 
 Open **Settings → Scheduled tasks** to create scheduled tasks or manage existing
 ones across your connected environments. Use the settings filter to narrow the
-list by environment or project. Each task runs on the environment you choose,
-using its project, model, and workspace settings. Fixed-time schedules use that
+list by environment or project. A task that starts a thread uses the model and
+workspace you save on the task. A task that posts into an existing thread uses
+that thread's current model and workspace. Fixed-time schedules use the selected
 environment's time zone, which may differ from your phone's. Choose **Once**
 to run a task a single time at a date and time in your own time zone. If the
 environment is offline then, the task runs when it is back.
@@ -114,10 +115,13 @@ or desktop.
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
 immediately.
-To handle a single result, such as a test command exiting, turn on **Stop after
+To handle a single external result, turn on **Stop after
 first matching request**. The task turns off once T3 queues the turn. Requests
 that fail validation or do not match the filters don't use it up.
 Leaving an edited form asks before discarding unsaved changes.
+
+Ask an agent to schedule a time or to wake on a webhook. In a Pi thread, ask it
+to run and wait for a local command instead of setting up a webhook for it.
 
 ## Webhook automations
 

@@ -1045,6 +1045,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
                 {
                   id: "task-foreign",
                   projectId: foreignProjectId,
+                  destination: { type: "new_thread" },
                   runtimeMode: "approval-required",
                   interactionMode: "default",
                 } as never,
@@ -1085,7 +1086,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
 
     const staleSchedule = yield* service
       .scheduleTask(makeScope(), {
-        projectId: foreignProjectId,
+        destination: { type: "new_thread", projectId: foreignProjectId },
         prompt: "check in later",
         schedule: { type: "interval", everyMs: 3_600_000 },
       })
