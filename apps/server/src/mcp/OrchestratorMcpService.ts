@@ -1708,7 +1708,7 @@ const make = Effect.gen(function* () {
     readonly parent: {
       readonly thread: Pick<
         OrchestrationV2ThreadProjection["thread"],
-        "projectId" | "modelSelection"
+        "projectId" | "modelSelection" | "runtimeMode"
       >;
     };
     readonly target: OrchestratorMcpTarget | undefined;
@@ -2522,7 +2522,9 @@ const make = Effect.gen(function* () {
       requested?.target === undefined
         ? inherited
         : (yield* resolveTargetRechecking({
-            parent: { thread: { projectId, modelSelection: inherited } },
+            parent: {
+              thread: { projectId, modelSelection: inherited, runtimeMode: limits.runtimeMode },
+            },
             target: requested.target,
             providers: yield* loadProviders,
             cwd:
