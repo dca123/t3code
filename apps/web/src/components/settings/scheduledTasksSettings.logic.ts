@@ -153,11 +153,9 @@ export interface DraftState {
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
   readonly existingWorktreePath: string;
-  readonly modelKey: string;
+  readonly modelSelection: ModelSelection | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
-  /** Retain the source selection's provider options when the picker leaves instanceId:model unchanged. */
-  readonly baseModelSelection: ModelSelection | null;
   readonly signatureEnabled: boolean;
   readonly signatureHeader: string;
   readonly signatureEncoding: "hex" | "base64";
@@ -385,11 +383,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     baseRef: workspace?.type === "worktree" ? workspace.baseRef : "",
     startFromOrigin: workspace?.type === "worktree" ? (workspace.startFromOrigin ?? false) : true,
     existingWorktreePath: workspace?.type === "existing_worktree" ? workspace.worktreePath : "",
-    modelKey:
-      launch === null ? "" : `${launch.modelSelection.instanceId}:${launch.modelSelection.model}`,
+    modelSelection: launch?.modelSelection ?? null,
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
-    baseModelSelection: launch?.modelSelection ?? null,
     ...(schedule.type === "webhook" && schedule.signature !== null
       ? {
           signatureEnabled: true,

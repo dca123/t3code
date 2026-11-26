@@ -4,7 +4,17 @@ import {
   type ServerProviderSkill,
   type ProviderDriverKind,
 } from "@t3tools/contracts";
-import { createContext, use, useEffect, useId, useRef, useState, type RefObject } from "react";
+import {
+  createContext,
+  use,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+  type RefObject,
+} from "react";
 import { detectComposerTrigger } from "~/composer-logic";
 import { searchProviderSkills } from "~/providerSkillSearch";
 import { useRenderedAppearance } from "~/hooks/useTheme";
@@ -26,6 +36,11 @@ export const AssistantCitationSkillsContext = createContext<{
   skills: ReadonlyArray<ServerProviderSkill>;
   provider: ProviderDriverKind;
 } | null>(null);
+/** Lets the popover finish a running dictation, instead of discarding it, when it is dismissed. */
+export type AssistantCitationCommentDictation = {
+  /** False when nothing is being dictated; otherwise `settle` gets the comment once it is transcribed. */
+  finish: (settle: (comment: string) => void) => boolean;
+};
 
 export function AssistantCitationCommentEditor({
   citation,
@@ -36,6 +51,7 @@ export function AssistantCitationCommentEditor({
   onDelete,
   onDraftChange,
   onVoiceSetupOpenChange,
+  dictationRef,
 }: {
   citation: AssistantCitation;
   inputRef?: RefObject<HTMLTextAreaElement | null>;
@@ -45,6 +61,7 @@ export function AssistantCitationCommentEditor({
   onDelete?: () => void;
   onDraftChange?: (comment: string) => void;
   onVoiceSetupOpenChange?: (open: boolean) => void;
+  dictationRef?: Ref<AssistantCitationCommentDictation>;
 }) {
   const gt = useGT();
   const [comment, setComment] = useState(citation.comment ?? "");
@@ -117,6 +134,13 @@ export function AssistantCitationCommentEditor({
     onVoiceSetupOpenChange?.(setupOpen);
     return () => onVoiceSetupOpenChange?.(false);
   }, [onVoiceSetupOpenChange, setupOpen]);
+  useImperativeHandle(dictationRef, () => ({
+    finish: (settle) => {
+      if (!speech.blocksSubmission || speech.preparing) return false;
+      speech.submitAfterDictation(settle);
+      return true;
+    },
+  }));
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
   const submit = () => {
     speech.submitAfterDictation((text) => {
