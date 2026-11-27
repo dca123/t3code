@@ -2,6 +2,8 @@ import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { ThreadHoverCard, ThreadHoverCardTrigger } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
+import { useIsCallingThread } from "../chat/threadVoiceCallStore";
+import { PhoneIcon } from "lucide-react";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { formatWorktreePathForDisplay } from "../../worktreeCleanup";
 import { contextMenuSourceOf } from "../../contextMenuSource";
@@ -730,6 +732,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     variantAction,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+  const onVoiceCall = useIsCallingThread(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const canTriageThread = !useEnvironmentScopeDenied(
@@ -1219,6 +1222,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       onThreadActivate={onThreadActivate}
     />
   );
+  const callIndicator = onVoiceCall ? (
+    <PhoneIcon
+      role="img"
+      aria-label={gt("Voice call in progress")}
+      className="size-3 shrink-0 text-muted-foreground"
+    />
+  ) : null;
   const draftIndicator = hasUnsentDraft ? (
     <SharedTooltipTrigger
       render={
@@ -1389,6 +1399,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             )}
             {draftIndicator}
             {title}
+            {callIndicator}
             {multiline ? titleLineIcons : null}
             {pinIndicator}
             {multiline ? null : terminalStatusIcon}
@@ -1744,6 +1755,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           </div>
           <div className="mt-1 flex min-w-0 items-center gap-1.5">
             {title}
+            {callIndicator}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
                 <T>Regenerating title</T>

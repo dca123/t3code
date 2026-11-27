@@ -79,46 +79,50 @@ it.effect("places a run-start item ahead of the run's items, then appends once t
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("appends spoken lines after the thread's visible turn without giving them a run", () =>
-  Effect.gen(function* () {
-    const positions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
-    const threadId = ThreadId.make("thread:voice-transcript");
-    const runId = RunId.make("run:previous");
-    const priorReply = yield* positions.allocate({
-      threadId,
-      turnItemId: TurnItemId.make("item:previous-reply"),
-      runId,
-      runOrdinal: 2,
-    });
-    const now = yield* DateTime.now;
-    const record = (turnId: string) => {
-      const messageId = MessageId.make(`voice:2006f497-3d23-41be-a785-8251703ec048:${turnId}`);
-      return positions.normalize({
-        id: TurnItemId.make(messageId),
+it.effect(
+  "appends spoken lines and failed handoffs after the visible turn without giving them a run",
+  () =>
+    Effect.gen(function* () {
+      const positions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+      const threadId = ThreadId.make("thread:voice-transcript");
+      const runId = RunId.make("run:previous");
+      const priorReply = yield* positions.allocate({
         threadId,
-        runId: null,
-        nodeId: null,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: 0,
-        status: "completed",
-        title: null,
-        startedAt: now,
-        updatedAt: now,
-        completedAt: now,
-        type: "assistant_message",
-        text: "Hello",
-        messageId,
-        streaming: false,
+        turnItemId: TurnItemId.make("item:previous-reply"),
+        runId,
+        runOrdinal: 2,
       });
-    };
-    const first = yield* record("greeting");
-    const second = yield* record("reply");
-    assert.isAbove(first.ordinal, priorReply);
-    assert.isAbove(second.ordinal, first.ordinal);
-    assert.isNull(second.runId);
-    assert.equal((yield* record("greeting")).ordinal, first.ordinal);
-  }).pipe(Effect.provide(layerTest)),
+      const now = yield* DateTime.now;
+      const record = (messageId: MessageId) => {
+        return positions.normalize({
+          id: TurnItemId.make(messageId),
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          updatedAt: now,
+          completedAt: now,
+          type: "assistant_message",
+          text: "Hello",
+          messageId,
+          streaming: false,
+        });
+      };
+      const firstId = MessageId.make("voice:2006f497-3d23-41be-a785-8251703ec048:greeting");
+      const first = yield* record(firstId);
+      const failed = yield* record(
+        MessageId.make("voice-handoff-failed:2006f497-3d23-41be-a785-8251703ec048:handoff"),
+      );
+      assert.isAbove(first.ordinal, priorReply);
+      assert.isAbove(failed.ordinal, first.ordinal);
+      assert.isNull(failed.runId);
+      assert.equal((yield* record(firstId)).ordinal, first.ordinal);
+    }).pipe(Effect.provide(layerTest)),
 );

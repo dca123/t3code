@@ -2,10 +2,9 @@ import {
   CommandId,
   EventId,
   MessageId,
-  THREAD_VOICE_MAX_DURATION_MS,
+  ProviderRequestKind,
   ThreadVoiceError,
   TurnItemId,
-  type ThreadId,
   type RunId,
   type ThreadVoiceReportInput,
   type ThreadVoiceStartInput,
@@ -20,12 +19,15 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
+
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as GptLiveCall from "./GptLiveCall.ts";
 import { liveConversation, speakableAppends } from "./LiveConversation.ts";
@@ -58,6 +60,8 @@ export const layerDisabled = Layer.succeed(ThreadVoiceCalls, {
 
 type LiveEvent = ReturnType<ReturnType<typeof liveConversation>["receive"]>;
 type Completion = { readonly type: "completion"; readonly epoch: number; readonly text: string };
+type Approval = { readonly type: "approval"; readonly id: string };
+const isApproval = Schema.is(ProviderRequestKind);
 
 const make = Effect.gen(function* () {
   const enabled = yield* Config.Boolean("T3CODE_EXPERIMENTAL_THREAD_VOICE").pipe(
@@ -67,11 +71,12 @@ const make = Effect.gen(function* () {
   if (!enabled) return ThreadVoiceCalls.of({ connection: Effect.succeed(disabledConnection) });
   const threads = yield* ThreadManagement.ThreadManagementService;
   const events = yield* EventSink.EventSinkV2;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const random = yield* SecureRandom.SecureRandom;
   const fileContext = yield* Effect.context<
     FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom
   >();
-  const reservations = new Set<ThreadId>();
+  let reserved = false;
 
   const runCall = Effect.fn("ThreadVoiceCalls.run")(function* (
     input: typeof ThreadVoiceStartInput.Type,
@@ -86,19 +91,25 @@ const make = Effect.gen(function* () {
     yield* Effect.logDebug("Thread voice call connected");
 
     const conversation = liveConversation();
-    const pending = yield* Queue.bounded<LiveEvent | Completion>(128);
+    const pending = yield* Queue.bounded<LiveEvent | Completion | Approval>(128);
     const scope = yield* Scope.Scope;
-    let active: { runId: RunId; delegationId: string; generation: number; epoch: number } | null =
-      null;
-    const steeredUtterances = new Map<string, number>();
+    let active: { delegationId: string; generation: number; epoch: number } | null = null;
+    const started = new Map<string, DateTime.Utc>();
+    const announcedApprovals = new Set<string>();
     let epoch = 0;
     const target = { projectId: thread.projectId, threadId: input.threadId };
 
-    const record = Effect.fn("ThreadVoiceCalls.recordTranscript")(function* (
-      event: Extract<LiveEvent, { type: "transcript" }>,
-    ) {
+    const record = Effect.fn("ThreadVoiceCalls.recordTranscript")(function* (event: {
+      id: MessageId;
+      role: "user" | "assistant";
+      text: string;
+      complete: boolean;
+    }) {
       const now = yield* DateTime.now;
-      const messageId = MessageId.make(`voice:${input.callId}:${event.id}`);
+      const messageId = event.id;
+      const createdAt = started.get(messageId) ?? now;
+      if (event.complete) started.delete(messageId);
+      else started.set(messageId, createdAt);
       const transcript = {
         threadId: input.threadId,
         runId: null,
@@ -123,7 +134,7 @@ const make = Effect.gen(function* () {
                 id: messageId,
                 role: event.role,
                 streaming: false,
-                createdAt: now,
+                createdAt,
               },
             },
             {
@@ -142,7 +153,7 @@ const make = Effect.gen(function* () {
                 ordinal: 0,
                 status: "completed",
                 title: null,
-                startedAt: now,
+                startedAt: createdAt,
                 completedAt: now,
                 ...(event.role === "user"
                   ? { type: "user_message", inputIntent: "turn_start", ...provenance }
@@ -155,11 +166,11 @@ const make = Effect.gen(function* () {
     });
 
     const reply = Effect.fn("ThreadVoiceCalls.finalAnswer")(function* (runId: RunId) {
-      const { run } = yield* threads.waitForThread({ ...target, runId, timeoutMs: 300_000 });
+      const { run } = yield* threads.waitForThread({ ...target, runId, timeoutMs: 86_400_000 });
       if (run?.status !== "completed") return "";
       const records = yield* threads.getThreadRecords(input.threadId, ["messages", "turnItems"], {
-        messageRunIds: [runId],
-        turnItemRunIds: [runId],
+        messageRunIds: [run.id],
+        turnItemRunIds: [run.id],
         turnItemTypes: ["assistant_message"],
       });
       const last = records.turnItems
@@ -176,33 +187,60 @@ const make = Effect.gen(function* () {
       return message?.text ?? last.text;
     });
 
-    const submit = Effect.fn("ThreadVoiceCalls.submit")(function* (
-      text: string,
-      delivery: { type: "turn" } | { type: "steer"; runId: RunId },
-      delegationId: string,
+    const speak = Effect.fn("ThreadVoiceCalls.speak")(function* (
+      delegationId: string | null,
       generation: number,
+      finalAnswer: string,
     ) {
-      const id = yield* random.uuidV4();
+      const appends = speakableAppends({
+        delegationId,
+        generation,
+        currentGeneration: conversation.generation(),
+        finalAnswer,
+      });
+      for (const append of appends) {
+        if (generation !== conversation.generation()) break;
+        yield* live.writer.write(append).pipe(Effect.mapError(GptLiveCall.connectionFailure));
+      }
+      if (appends.length > 0)
+        yield* Effect.logDebug("Thread voice appended speech", { chunks: appends.length });
+    });
+
+    const submit = Effect.fn("ThreadVoiceCalls.submit")(function* (
+      handoff: Extract<LiveEvent, { type: "delegation" }>,
+    ) {
+      const id = `${input.callId}:${handoff.id}`;
       const sent = yield* threads
         .sendToThread({
           ...target,
-          commandId: CommandId.make(`voice:${id}`),
-          messageId: MessageId.make(`voice:${id}`),
-          text,
+          commandId: CommandId.make(`voice-handoff:${id}`),
+          messageId: MessageId.make(`voice-handoff:${id}`),
+          text: handoff.prompt,
           attachments: [],
-          mode: delivery.type === "steer" ? "steer" : "queue",
-          ...(delivery.type === "steer" ? { steerTargetRunId: delivery.runId } : {}),
+          mode: "auto",
           createdBy: "user",
           creationSource: "server",
         })
         .pipe(
-          Effect.catchTags({ ThreadManagementNoSteerableRunError: () => Effect.succeed(null) }),
-          Effect.mapError(GptLiveCall.connectionFailure),
+          Effect.catch((error) =>
+            Effect.logWarning("Thread voice handoff failed", { failure: error._tag }).pipe(
+              Effect.as(null),
+            ),
+          ),
         );
-      if (sent === null) return false;
+      if (sent === null) {
+        yield* record({
+          id: MessageId.make(`voice-handoff-failed:${id}`),
+          role: "user",
+          text: handoff.request,
+          complete: true,
+        });
+        yield* speak(handoff.id, handoff.generation, "I couldn't reach the thread's agent.");
+        return;
+      }
       const runId = sent.run.id;
       const turnEpoch = ++epoch;
-      active = { runId, delegationId, generation, epoch: turnEpoch };
+      active = { delegationId: handoff.id, generation: handoff.generation, epoch: turnEpoch };
       yield* Effect.logDebug("Thread voice input delivered", { delivery: sent.delivery });
       yield* reply(runId).pipe(
         Effect.orElseSucceed(() => ""),
@@ -211,7 +249,6 @@ const make = Effect.gen(function* () {
         ),
         Effect.forkIn(scope),
       );
-      return true;
     });
 
     const readFrames = Effect.gen(function* () {
@@ -223,6 +260,37 @@ const make = Effect.gen(function* () {
         }
       }
     });
+    const watchApprovals = Effect.gen(function* () {
+      const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
+      const { runtimeRequests } = yield* threads.getThreadRecords(input.threadId, [
+        "runtimeRequests",
+      ]);
+      for (const request of runtimeRequests) {
+        if (request.status === "pending" && isApproval(request.kind))
+          yield* Queue.offer(pending, { type: "approval", id: request.id });
+      }
+      yield* orchestrator
+        .streamStoredEventsFrom({
+          threadId: input.threadId,
+          afterSequence,
+          eventType: "runtime-request.updated",
+        })
+        .pipe(
+          Stream.runForEach(({ event }) =>
+            event.type === "runtime-request.updated" &&
+            event.payload.status === "pending" &&
+            isApproval(event.payload.kind)
+              ? Queue.offer(pending, { type: "approval", id: event.payload.id })
+              : Effect.void,
+          ),
+        );
+    });
+    yield* watchApprovals.pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not watch for voice call approvals", { failure: error._tag }),
+      ),
+      Effect.forkIn(scope),
+    );
     const handleEvents = Effect.gen(function* () {
       while (true) {
         const event = yield* Queue.take(pending);
@@ -235,58 +303,30 @@ const make = Effect.gen(function* () {
             yield* Effect.logDebug("Thread voice speakable append acknowledged");
             break;
           case "transcript": {
-            if (event.text) yield* record(event);
-            if (event.text && event.canSteer && active !== null) {
-              const { runId, delegationId } = active;
-              if (
-                yield* submit(event.text, { type: "steer", runId }, delegationId, event.generation)
-              ) {
-                steeredUtterances.set(event.id, epoch);
-              }
-            }
+            if (event.text)
+              yield* record({ ...event, id: MessageId.make(`voice:${input.callId}:${event.id}`) });
             break;
           }
           case "delegation": {
-            const steered =
-              event.userTurn === null ? undefined : steeredUtterances.get(event.userTurn);
-            if (steered !== undefined) {
-              if (active !== null && active.epoch === steered) {
-                active = { ...active, delegationId: event.id, generation: event.generation };
-              }
-              break;
-            }
             yield* Effect.logDebug("Thread voice received a handoff");
-            if (
-              active !== null &&
-              (yield* submit(
-                event.prompt,
-                { type: "steer", runId: active.runId },
-                event.id,
-                event.generation,
-              ))
-            )
-              break;
-            yield* submit(event.prompt, { type: "turn" }, event.id, event.generation);
+            yield* submit(event);
+            break;
+          }
+          case "approval": {
+            if (announcedApprovals.has(event.id)) break;
+            announcedApprovals.add(event.id);
+            yield* speak(
+              null,
+              conversation.generation(),
+              "The agent needs your approval in the thread.",
+            );
             break;
           }
           case "completion": {
             if (active === null || active.epoch !== event.epoch) break;
             const { delegationId, generation } = active;
             active = null;
-            const appends = speakableAppends({
-              delegationId,
-              generation,
-              currentGeneration: conversation.generation(),
-              finalAnswer: event.text,
-            });
-            for (const append of appends) {
-              if (generation !== conversation.generation()) break;
-              yield* live.writer.write(append).pipe(Effect.mapError(GptLiveCall.connectionFailure));
-            }
-            if (appends.length > 0)
-              yield* Effect.logDebug("Thread voice appended a final answer", {
-                chunks: appends.length,
-              });
+            yield* speak(delegationId, generation, event.text);
             break;
           }
         }
@@ -310,22 +350,20 @@ const make = Effect.gen(function* () {
       const ready = yield* Deferred.make<typeof ThreadVoiceStartResult.Type, ThreadVoiceError>();
       yield* Effect.uninterruptible(
         Effect.gen(function* () {
-          if (current !== null || reservations.has(input.threadId))
-            return yield* new ThreadVoiceError({ reason: "busy" });
+          if (current !== null || reserved) return yield* new ThreadVoiceError({ reason: "busy" });
           const scope = yield* Scope.fork(owner);
-          reservations.add(input.threadId);
+          reserved = true;
           current = { id: input.callId, scope };
           const release = Effect.sync(() => {
             current = null;
-            reservations.delete(input.threadId);
+            reserved = false;
           });
           yield* runCall(input, thread, ready).pipe(
             Effect.scoped,
-            Effect.timeoutOption(THREAD_VOICE_MAX_DURATION_MS),
+
             Effect.onExit((exit) => {
               let reason = "upstream-failed";
-              if (Exit.isSuccess(exit))
-                reason = Option.isNone(exit.value) ? "expired" : "upstream-ended";
+              if (Exit.isSuccess(exit)) reason = "upstream-ended";
               else if (Cause.hasInterruptsOnly(exit.cause)) reason = "cancelled";
               return Effect.withSpan(
                 Deferred.complete(

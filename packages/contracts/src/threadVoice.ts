@@ -11,10 +11,24 @@ export const ThreadVoiceStartInput = Schema.Struct({
 });
 export const ThreadVoiceStartResult = Schema.Struct({ sdp: Schema.String });
 
-export const THREAD_VOICE_MAX_DURATION_MS = 300_000;
+export const THREAD_VOICE_SILENCE_MS = 300_000;
 
 export function isThreadVoiceTranscript(messageId: MessageId): boolean {
   return messageId.startsWith("voice:") && messageId.indexOf(":", "voice:".length) !== -1;
+}
+
+export const isFailedThreadVoiceHandoff = (messageId: MessageId) =>
+  messageId.startsWith("voice-handoff-failed:");
+
+export function threadVoiceHandoff(messageId: MessageId, text: string) {
+  if (isFailedThreadVoiceHandoff(messageId)) return { request: text, failed: true };
+  if (!messageId.startsWith("voice-handoff:") && !messageId.startsWith("voice:")) return null;
+  const input = /^<realtime_delegation>\s*<input>([\s\S]*?)<\/input>/.exec(text)?.[1];
+  if (input === undefined) return null;
+  return {
+    request: input.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&"),
+    failed: false,
+  };
 }
 
 const ThreadVoicePhase = Schema.Literals([
@@ -29,8 +43,7 @@ export type ThreadVoicePhase = typeof ThreadVoicePhase.Type;
 
 const ThreadVoiceEndReason = Schema.Literals([
   "hung-up",
-  "left-thread",
-  "expired",
+  "silence",
   "microphone-blocked",
   "microphone-unavailable",
   "microphone-ended",
