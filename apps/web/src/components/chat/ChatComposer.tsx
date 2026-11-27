@@ -4142,6 +4142,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
+                  {/* Switching from Send to Stop must not unmount the active call. */}
+                  {threadVoiceEnabled ? (
+                    <ThreadVoiceCallButton
+                      key={`voice:${environmentId}:${activeThreadId}`}
+                      environmentId={environmentId}
+                      threadId={activeThreadId}
+                      blocked={dictationDisabled || voiceInputActive || isEditingQueuedMessage}
+                      onActiveChange={setThreadVoiceActive}
+                    />
+                  ) : null}
                   <ComposerFooterPrimaryActions
                     // Stop state belongs to one thread; the composer stays mounted across threads.
                     key={`${environmentId}:${activeThreadId ?? "new"}`}
@@ -4202,15 +4212,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         onSkipPostProcessing={() => speechInput.skipPostProcessing()}
                       />
                     ) : null}
-                    {threadVoiceEnabled ? (
-                      <ThreadVoiceCallButton
-                        key={`${environmentId}:${activeThreadId}`}
-                        environmentId={environmentId}
-                        threadId={activeThreadId}
-                        blocked={dictationDisabled || voiceInputActive || isEditingQueuedMessage}
-                        onActiveChange={setThreadVoiceActive}
-                      />
-                    ) : speechInput.available ? (
+                    {!threadVoiceEnabled && speechInput.available ? (
                       <ComposerSpeechButton
                         state={speechInput.state}
                         shortcutLabel={dictationShortcutLabel}
