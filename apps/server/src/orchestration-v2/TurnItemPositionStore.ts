@@ -1,4 +1,10 @@
-import { OrchestrationV2TurnItem, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import {
+  isThreadVoiceTranscript,
+  OrchestrationV2TurnItem,
+  RunId,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,7 +29,7 @@ export interface TurnItemPositionStoreV2Shape {
     readonly runId: RunId | null;
     readonly runOrdinal?: number;
     // `run_start` takes the run's unused first slot, ahead of its items, and appends once it is taken.
-    readonly placement?: "append" | "run_start";
+    readonly placement?: "append" | "run_start" | "thread_tail";
     // Keep an existing position even when it lies outside the run's range.
     readonly keepExisting?: boolean;
   }) => Effect.Effect<number, TurnItemPositionStoreError>;
@@ -60,6 +66,15 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
           LIMIT 1
         `;
+          const current = existing[0]?.ordinal;
+          if (current !== undefined && (keepExisting || runId === null)) return current;
+          const tail =
+            placement === "thread_tail"
+              ? yield* sql<{ readonly ordinal: number | null }>`
+                  SELECT MAX(ordinal) AS ordinal FROM orchestration_v2_turn_item_positions
+                  WHERE thread_id = ${threadId}
+                `
+              : [];
           const runRows =
             runId === null || suppliedRunOrdinal !== undefined
               ? []
@@ -70,16 +85,12 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
                 LIMIT 1
               `;
           const runOrdinal = suppliedRunOrdinal ?? runRows[0]?.ordinal ?? null;
-          const lowerBound = runOrdinal === null ? 0 : runOrdinal * 1_000_000;
-          const upperBound = runOrdinal === null ? 999_999 : lowerBound + 999_999;
-          const current = existing[0]?.ordinal;
+          const range = runOrdinal ?? Math.floor((tail[0]?.ordinal ?? 0) / 1_000_000);
+          const lowerBound = range * 1_000_000;
+          const upperBound = lowerBound + 999_999;
           if (current !== undefined) {
             // A steer that missed its turn starts the next run; it moves into that run's range.
-            if (
-              keepExisting ||
-              runOrdinal === null ||
-              (current >= lowerBound && current <= upperBound)
-            ) {
+            if (runOrdinal === null || (current >= lowerBound && current <= upperBound)) {
               return current;
             }
             yield* sql`
@@ -141,10 +152,15 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
       allocate,
       // Per-event normalization shares the enclosing orchestration span.
       normalize: Effect.fnUntraced(function* (item, runOrdinal) {
+        const transcript =
+          item.runId === null &&
+          (item.type === "user_message" || item.type === "assistant_message") &&
+          isThreadVoiceTranscript(item.messageId);
         return yield* allocate({
           threadId: item.threadId,
           turnItemId: item.id,
           runId: item.runId,
+          placement: transcript ? "thread_tail" : "append",
           // Queued steers keep their submission order until their run starts (see Orchestrator).
           keepExisting: item.status === "pending",
           ...(runOrdinal === undefined ? {} : { runOrdinal }),

@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { ThreadId } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, type MessageId } from "./baseSchemas.ts";
 
 export const ThreadVoiceEndInput = Schema.Struct({
   callId: Schema.String.check(Schema.isUUID()),
@@ -12,6 +12,10 @@ export const ThreadVoiceStartInput = Schema.Struct({
 export const ThreadVoiceStartResult = Schema.Struct({ sdp: Schema.String });
 
 export const THREAD_VOICE_MAX_DURATION_MS = 300_000;
+
+export function isThreadVoiceTranscript(messageId: MessageId): boolean {
+  return messageId.startsWith("voice:") && messageId.indexOf(":", "voice:".length) !== -1;
+}
 
 const ThreadVoicePhase = Schema.Literals([
   "microphone",
@@ -72,6 +76,11 @@ const ThreadVoiceObservation = Schema.Union([
     enabled: Schema.Boolean,
   }),
   Schema.TaggedStruct("playback", { state: Schema.Literals(["track", "playing", "blocked"]) }),
+  Schema.TaggedStruct("inbound-audio", {
+    bytesReceived: NonNegativeInt,
+    totalAudioEnergy: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    audioLevel: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  }),
 ]);
 export type ThreadVoiceObservation = typeof ThreadVoiceObservation.Type;
 
