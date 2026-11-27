@@ -15,7 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import * as Schema from "effect/Schema";
-import { MicIcon, PhoneIcon, PhoneOffIcon, XIcon } from "lucide-react";
+import { MicIcon, PhoneIcon, PhoneOffIcon, Volume2Icon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { connectionAtomRuntime } from "../../connection/runtime";
@@ -170,7 +170,8 @@ export function ThreadVoiceCallButton({
   const [micName, setMicName] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [activity, setActivity] = useState(emptyVoiceActivity);
-  const meter = useRef<HTMLMeterElement>(null);
+  const micMeter = useRef<HTMLMeterElement>(null);
+  const incomingMeter = useRef<HTMLMeterElement>(null);
   const current = useRef<((reason: ThreadVoiceEndReason) => void) | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases microphone and peer when this thread's composer unmounts
   useEffect(() => () => current.current?.("left-thread"), []);
@@ -271,7 +272,7 @@ export function ThreadVoiceCallButton({
       setMicName(track.label || gt("Default microphone"));
       reportMic();
       if (signal.aborted) return;
-      if (audioContext !== null) samples = meterMicrophone(audioContext, mic, meter);
+      if (audioContext !== null) samples = meterMicrophone(audioContext, mic, micMeter);
 
       const rtc = new RTCPeerConnection({ bundlePolicy: "max-bundle" });
       peer = rtc;
@@ -323,9 +324,10 @@ export function ThreadVoiceCallButton({
         if (received.type === "ended") finish(received.reason);
         if (received.type === "activity") setActivity(received.update);
       };
-      rtc.ontrack = ({ track: remote }) => {
+      rtc.ontrack = ({ track: remote, receiver }) => {
         if (signal.aborted || remote.kind !== "audio") return;
         observe({ _tag: "playback", state: "track" });
+        meterIncomingAudio(receiver, incomingMeter, signal, observe);
         playback.srcObject = new MediaStream([remote]);
         void playback
           .play()
@@ -379,7 +381,8 @@ export function ThreadVoiceCallButton({
             activity={activity}
             micName={micName}
             expiresAt={expiresAt}
-            meter={meter}
+            micMeter={micMeter}
+            incomingMeter={incomingMeter}
             dismiss={() => setDisplay({ kind: "idle" })}
           />,
           statusTarget,
@@ -424,19 +427,63 @@ function meterMicrophone(
   }, 100);
 }
 
+function meterIncomingAudio(
+  receiver: RTCRtpReceiver,
+  meter: { readonly current: HTMLMeterElement | null },
+  signal: AbortSignal,
+  observe: (observation: ThreadVoiceObservation) => void,
+) {
+  let nextTraceAt = performance.now();
+  let timer: ReturnType<typeof setTimeout>;
+  const sample = async () => {
+    if (signal.aborted) return;
+    const report = await receiver.getStats().catch(() => null);
+    if (signal.aborted) return;
+    let inbound: RTCInboundRtpStreamStats | undefined;
+    report?.forEach((stat: RTCStats) => {
+      if (stat.type === "inbound-rtp") inbound = stat as RTCInboundRtpStreamStats;
+    });
+    const level = inbound?.audioLevel ?? 0;
+    const element = meter.current;
+    const meterValue = Math.min(1, level * 5);
+    if (element !== null && element.value !== meterValue) element.value = meterValue;
+
+    const now = performance.now();
+    if (
+      now >= nextTraceAt &&
+      inbound?.bytesReceived !== undefined &&
+      inbound.totalAudioEnergy !== undefined &&
+      inbound.audioLevel !== undefined
+    ) {
+      nextTraceAt = now + 2_000;
+      observe({
+        _tag: "inbound-audio",
+        bytesReceived: inbound.bytesReceived,
+        totalAudioEnergy: inbound.totalAudioEnergy,
+        audioLevel: inbound.audioLevel,
+      });
+    }
+    timer = setTimeout(() => void sample(), 100);
+  };
+  signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+  void sample();
+}
+
 function CallStatus({
   display,
   activity,
   micName,
   expiresAt,
-  meter,
+  micMeter,
+  incomingMeter,
   dismiss,
 }: {
   readonly display: Exclude<CallDisplay, { kind: "idle" }>;
   readonly activity: VoiceActivity;
   readonly micName: string | null;
   readonly expiresAt: number | null;
-  readonly meter: React.RefObject<HTMLMeterElement | null>;
+  readonly micMeter: React.RefObject<HTMLMeterElement | null>;
+  readonly incomingMeter: React.RefObject<HTMLMeterElement | null>;
   readonly dismiss: () => void;
 }) {
   const gt = useGT();
@@ -472,16 +519,18 @@ function CallStatus({
             {expiresAt !== null ? <CallClock deadline={expiresAt} /> : null}
           </div>
           {micName !== null ? (
-            <div className="mt-1 flex items-center gap-2 text-muted-foreground">
-              <MicIcon aria-hidden="true" className="size-3 shrink-0" />
-              <span className="min-w-0 truncate">{micName}</span>
-              <meter
-                ref={meter}
-                aria-label={gt("Microphone level")}
-                min={0}
-                max={1}
-                defaultValue={0}
-                className="h-2 w-16 shrink-0"
+            <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
+              <AudioLevel
+                icon={MicIcon}
+                label={micName}
+                meterLabel={gt("Microphone level")}
+                meter={micMeter}
+              />
+              <AudioLevel
+                icon={Volume2Icon}
+                label={gt("ChatGPT voice")}
+                meterLabel={gt("Incoming audio level")}
+                meter={incomingMeter}
               />
             </div>
           ) : null}
@@ -509,6 +558,33 @@ function CallStatus({
         </>
       )}
     </section>
+  );
+}
+
+function AudioLevel({
+  icon: Icon,
+  label,
+  meterLabel,
+  meter,
+}: {
+  readonly icon: typeof MicIcon;
+  readonly label: string;
+  readonly meterLabel: string;
+  readonly meter: React.RefObject<HTMLMeterElement | null>;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <Icon aria-hidden="true" className="size-3 shrink-0" />
+      <span className="min-w-0 truncate">{label}</span>
+      <meter
+        ref={meter}
+        aria-label={meterLabel}
+        min={0}
+        max={1}
+        defaultValue={0}
+        className="h-2 w-16 shrink-0"
+      />
+    </div>
   );
 }
 

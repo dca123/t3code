@@ -14,6 +14,7 @@ import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { deriveTimelineMinimapItems } from "./timelineMinimapItems";
 import {
+  isThreadVoiceTranscript,
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
@@ -63,6 +64,7 @@ import {
   BotIcon,
   CircleAlertIcon,
   MessagesSquareIcon,
+  MicIcon,
   Minimize2Icon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -1753,10 +1755,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow key={row.id} row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "user" ? <UserMessageRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "assistant" ? (
-        <AssistantTimelineRow row={row} />
-      ) : null}
+      {row.kind === "message" ? <MessageTimelineRow row={row} /> : null}
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
@@ -1769,6 +1768,27 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     </div>
   );
 });
+
+function MessageTimelineRow({ row }: { readonly row: Extract<TimelineRow, { kind: "message" }> }) {
+  const gt = useGT();
+  const { message } = row;
+  if (message.runId === null && isThreadVoiceTranscript(message.id)) {
+    return (
+      <div className="min-w-0 rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+        <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <MicIcon aria-hidden="true" className="size-3 shrink-0" />
+          {message.role === "user" ? gt("You (voice)") : gt("ChatGPT voice")}
+        </p>
+        <p dir="auto" className="text-sm break-words whitespace-pre-wrap">
+          {message.text}
+        </p>
+      </div>
+    );
+  }
+  if (message.role === "user") return <UserMessageRow row={row} />;
+  if (message.role === "assistant") return <AssistantTimelineRow row={row} />;
+  return null;
+}
 
 function WorktreeSetupTimelineRow({
   row,

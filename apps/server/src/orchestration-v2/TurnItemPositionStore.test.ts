@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
-import { RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { MessageId, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -75,5 +76,49 @@ it.effect("places a run-start item ahead of the run's items, then appends once t
     assert.isAbove(recovery, 1_999_999);
     assert.equal(yield* allocate("item:retry-recovery", "run_start"), message + 1);
     assert.equal(yield* allocate("item:reply"), message + 2);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("appends spoken lines after the thread's visible turn without giving them a run", () =>
+  Effect.gen(function* () {
+    const positions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const threadId = ThreadId.make("thread:voice-transcript");
+    const runId = RunId.make("run:previous");
+    const priorReply = yield* positions.allocate({
+      threadId,
+      turnItemId: TurnItemId.make("item:previous-reply"),
+      runId,
+      runOrdinal: 2,
+    });
+    const now = yield* DateTime.now;
+    const record = (turnId: string) => {
+      const messageId = MessageId.make(`voice:2006f497-3d23-41be-a785-8251703ec048:${turnId}`);
+      return positions.normalize({
+        id: TurnItemId.make(messageId),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        updatedAt: now,
+        completedAt: now,
+        type: "assistant_message",
+        text: "Hello",
+        messageId,
+        streaming: false,
+      });
+    };
+    const first = yield* record("greeting");
+    const second = yield* record("reply");
+    assert.isAbove(first.ordinal, priorReply);
+    assert.isAbove(second.ordinal, first.ordinal);
+    assert.isNull(second.runId);
+    assert.equal((yield* record("greeting")).ordinal, first.ordinal);
   }).pipe(Effect.provide(layerTest)),
 );
