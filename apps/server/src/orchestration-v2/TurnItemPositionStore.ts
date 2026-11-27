@@ -1,4 +1,5 @@
 import {
+  isFailedThreadVoiceHandoff,
   isThreadVoiceTranscript,
   OrchestrationV2TurnItem,
   RunId,
@@ -152,15 +153,15 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
       allocate,
       // Per-event normalization shares the enclosing orchestration span.
       normalize: Effect.fnUntraced(function* (item, runOrdinal) {
-        const transcript =
+        const followsThread =
           item.runId === null &&
           (item.type === "user_message" || item.type === "assistant_message") &&
-          isThreadVoiceTranscript(item.messageId);
+          (isThreadVoiceTranscript(item.messageId) || isFailedThreadVoiceHandoff(item.messageId));
         return yield* allocate({
           threadId: item.threadId,
           turnItemId: item.id,
           runId: item.runId,
-          placement: transcript ? "thread_tail" : "append",
+          placement: followsThread ? "thread_tail" : "append",
           // Queued steers keep their submission order until their run starts (see Orchestrator).
           keepExisting: item.status === "pending",
           ...(runOrdinal === undefined ? {} : { runOrdinal }),

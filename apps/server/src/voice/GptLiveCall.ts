@@ -14,8 +14,13 @@ const CREATE_URL =
   "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas";
 const SIDEBAND_ORIGIN = "wss://api.openai.com/v1/live/";
 const instructions =
-  "Keep greetings and small talk brief. For questions that require research, reasoning, or calculations, " +
-  "delegate the question to the thread's agent before answering. When the agent replies, relay its answer faithfully, including any caveats.";
+  "You are the voice in a call with the user. Reply directly to greetings, small talk, " +
+  "thinking aloud, and requests to repeat or explain what you just said, including 'what else?'. " +
+  "Do not hand those off. Hand off only when the user asks for the thread's agent, " +
+  "or asks for work that needs the thread's files, tools, history, or a calculation. " +
+  "When handing off, say one short acknowledgment and wait quietly. Do not guess the answer, " +
+  "give progress reports, or repeat the acknowledgment. Relay the agent's answer faithfully, including any caveats. " +
+  "If the agent could not be reached, say so; do not attempt the task yourself.";
 
 const decodeAuth = Schema.decodeUnknownEffect(
   Schema.fromJsonString(

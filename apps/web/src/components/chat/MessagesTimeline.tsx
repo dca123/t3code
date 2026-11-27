@@ -15,6 +15,7 @@ import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { deriveTimelineMinimapItems } from "./timelineMinimapItems";
 import {
   isThreadVoiceTranscript,
+  threadVoiceHandoff,
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
@@ -1772,12 +1773,26 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
 function MessageTimelineRow({ row }: { readonly row: Extract<TimelineRow, { kind: "message" }> }) {
   const gt = useGT();
   const { message } = row;
+  const handoff = message.role === "user" ? threadVoiceHandoff(message.id, message.text) : null;
+  if (handoff !== null) {
+    const label = handoff.failed
+      ? gt('Voice → Agent: "{request}" (failed)', { request: handoff.request })
+      : gt('Voice → Agent: "{request}"', { request: handoff.request });
+    return (
+      <p
+        data-voice-handoff={handoff.failed ? "failed" : "sent"}
+        className="text-xs break-words text-muted-foreground"
+      >
+        {label}
+      </p>
+    );
+  }
   if (message.runId === null && isThreadVoiceTranscript(message.id)) {
     return (
       <div className="min-w-0 rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
         <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
           <MicIcon aria-hidden="true" className="size-3 shrink-0" />
-          {message.role === "user" ? gt("You (voice)") : gt("ChatGPT voice")}
+          {message.role === "user" ? gt("You") : gt("Voice", { $context: "realtime call speaker" })}
         </p>
         <p dir="auto" className="text-sm break-words whitespace-pre-wrap">
           {message.text}

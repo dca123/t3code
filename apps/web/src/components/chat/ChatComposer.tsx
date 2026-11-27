@@ -151,8 +151,9 @@ import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import { useDictationShortcut } from "../../speech/useDictationShortcut";
 import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmissionShortcut";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
-import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
+import { ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
 import { ThreadVoiceCallButton } from "./ThreadVoiceCallButton";
+import { useIsCallingThread, useThreadVoiceCallStore } from "./threadVoiceCallStore";
 import { useAtomValue } from "@effect/atom-react";
 import { serverEnvironment } from "../../state/server";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -1987,15 +1988,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     activePendingIsResponding ||
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
-  const [threadVoiceActive, setThreadVoiceActive] = useState(false);
+  const threadVoiceActive = useIsCallingThread(environmentId, activeThreadId);
+  const anyThreadVoiceActive = useThreadVoiceCallStore((state) => state.active !== null);
   const [threadVoiceStatusTarget, setThreadVoiceStatusTarget] = useState<HTMLDivElement | null>(
     null,
   );
+  const voiceCallConfigured =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.threadVoiceCalls === true;
   const threadVoiceEnabled =
-    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.threadVoiceCalls === true &&
+    (voiceCallConfigured || anyThreadVoiceActive) &&
     activeThreadId !== null &&
     activeThread !== null &&
     !hiddenThread;
+  const latestFailedHandoff = threadVoiceActive
+    ? props.promptHistoryEntries.findLast(
+        (entry) => entry.kind === "message" && entry.message.id.startsWith("voice-handoff-failed:"),
+      )
+    : undefined;
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectId: activeProjectId,
@@ -2336,6 +2345,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     submissionIntent?: ComposerSubmissionIntent,
     options?: { readonly afterDictation?: boolean },
   ) => {
+    if (threadVoiceActive) {
+      event?.preventDefault();
+      return false;
+    }
     if (voiceInputActive && !options?.afterDictation) {
       event?.preventDefault();
       const queuedOwnerKey = attachmentTargetKey;
@@ -4062,6 +4075,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         ) : undefined
                       }
                       disabled={
+                        threadVoiceActive ||
                         projectSelectionRequired ||
                         isChoiceOnlyPendingQuestion ||
                         activePendingIsResponding ||
@@ -4146,15 +4160,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
-                  {/* Switching from Send to Stop must not unmount the active call. */}
-                  {threadVoiceEnabled ? (
+                  {threadVoiceEnabled && activeThread && activeThreadId !== null ? (
                     <ThreadVoiceCallButton
                       key={`voice:${environmentId}:${activeThreadId}`}
                       environmentId={environmentId}
                       threadId={activeThreadId}
+                      title={activeThread.title}
                       available={routeKind === "server"}
                       blocked={dictationDisabled || voiceInputActive || isEditingQueuedMessage}
-                      onActiveChange={setThreadVoiceActive}
+                      agentStatus={
+                        pendingApprovals.length > 0
+                          ? "approval"
+                          : phase === "running"
+                            ? "working"
+                            : "idle"
+                      }
+                      failedHandoffId={
+                        latestFailedHandoff?.kind === "message"
+                          ? latestFailedHandoff.message.id
+                          : null
+                      }
                       statusTarget={threadVoiceStatusTarget}
                     />
                   ) : null}
@@ -4190,7 +4215,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     sendDisabledReason={primaryActionSendDisabledReason}
                     isEnvironmentUnavailable={primaryActionEnvironmentUnavailable}
                     isPreparingWorktree={isPreparingWorktree}
-                    hasSendableContent={hasMessageToSend || voiceInputActive}
+                    hasSendableContent={
+                      !threadVoiceActive && (hasMessageToSend || voiceInputActive)
+                    }
                     canResume={showResumeAction}
                     preserveComposerFocusOnPointerDown={isMobileViewport}
                     isEditingQueuedMessage={isEditingQueuedMessage}
@@ -4218,14 +4245,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         onSkipPostProcessing={() => speechInput.skipPostProcessing()}
                       />
                     ) : null}
-                    {!threadVoiceEnabled && speechInput.available ? (
-                      <ComposerSpeechButton
-                        state={speechInput.state}
-                        shortcutLabel={dictationShortcutLabel}
-                        disabled={dictationDisabled}
-                        onStart={() => void speechInput.start()}
-                      />
-                    ) : null}
+
                     <VoiceInputSetup
                       environmentId={speechInput.transcriptionEnvironmentId}
                       open={speechInput.setup.open}
