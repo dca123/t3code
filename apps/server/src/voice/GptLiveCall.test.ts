@@ -1,6 +1,7 @@
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -18,9 +19,13 @@ const authFile = (expiry: number) => {
 };
 const openWithAuth = (auth: string) =>
   GptLiveCall.open("v=0\r\n").pipe(
-    Effect.provide(FileSystem.layerNoop({ readFileString: () => Effect.succeed(auth) })),
-    Effect.provide(Path.layer),
-    Effect.provide(SecureRandom.layerWebCrypto),
+    Effect.provide(
+      Layer.mergeAll(
+        FileSystem.layerNoop({ readFileString: () => Effect.succeed(auth) }),
+        Path.layer,
+        SecureRandom.layerWebCrypto,
+      ),
+    ),
     Effect.flip,
   );
 
