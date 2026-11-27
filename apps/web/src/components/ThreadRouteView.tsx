@@ -7,14 +7,19 @@ import * as Option from "effect/Option";
 import { Link, Navigate, useNavigate } from "@tanstack/react-router";
 import { T } from "gt-react";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 import ChatView from "./ChatView";
 import { BackgroundThreadContext, HiddenThreadContext } from "./chat/backgroundThread";
 import { Button } from "./ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
+import { useTheme } from "../hooks/useTheme";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
+import { ThreadAppearanceContext } from "../threadAppearanceContext";
+import { useThreadLightMode } from "../threadLightMode";
+import { resolveThemeAppearance, resolveThemeHalf, threadLightPalette } from "../themePalette";
 import {
   useEnvironmentThreadRefs,
   useAnyEnvironmentHiding,
@@ -71,6 +76,15 @@ export function ThreadRouteView({
     draftId === null ? null : store.getPromotedDraftRedirect(draftId),
   );
   const serverThreadRef = target.kind === "server" ? target.threadRef : null;
+  const lit = useThreadLightMode(serverThreadRef);
+  const { theme, themeHalves, resolvedTheme } = useTheme();
+  const [portal, setPortal] = useState<HTMLDivElement | null>(null);
+  const lightScope =
+    lit &&
+    resolvedTheme === "dark" &&
+    resolveThemeAppearance(theme, false, false, "light", themeHalves) === "light"
+      ? threadLightPalette(resolveThemeHalf(theme, themeHalves, "light"))
+      : null;
   const serverThreadShell = useQuietThreadShell(serverThreadRef);
   const shellStatus = useEnvironmentShellStatus(serverThreadRef?.environmentId ?? null);
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
@@ -235,15 +249,19 @@ export function ThreadRouteView({
   }
 
   return (
-    <SidebarInset
-      className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
-      inert={background}
-    >
-      <BackgroundThreadContext value={background}>
-        <HiddenThreadContext value={background}>{view}</HiddenThreadContext>
-      </BackgroundThreadContext>
-      {background ? null : redirect}
-    </SidebarInset>
+    <ThreadAppearanceContext value={lightScope === null ? null : { portal }}>
+      <SidebarInset
+        {...lightScope}
+        className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
+        inert={background}
+      >
+        <BackgroundThreadContext value={background}>
+          <HiddenThreadContext value={background}>{view}</HiddenThreadContext>
+        </BackgroundThreadContext>
+        {background ? null : redirect}
+      </SidebarInset>
+      {lightScope && createPortal(<div {...lightScope} ref={setPortal} />, document.body)}
+    </ThreadAppearanceContext>
   );
 }
 

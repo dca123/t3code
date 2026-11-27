@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 import { cn } from "~/lib/utils";
+import { useThreadPortalContainer } from "~/threadAppearanceContext";
 import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
 import { Button, type ButtonVariant } from "~/components/ui/button";
 import {
@@ -65,7 +66,10 @@ function useDialogActionInitialFocus() {
   return { popupRef, initialFocus };
 }
 
-const DialogPortal = DialogPrimitive.Portal;
+function DialogPortal({ container, ...props }: DialogPrimitive.Portal.Props) {
+  const portal = useThreadPortalContainer();
+  return <DialogPrimitive.Portal container={container ?? portal} {...props} />;
+}
 
 function DialogTrigger(props: DialogPrimitive.Trigger.Props) {
   return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;

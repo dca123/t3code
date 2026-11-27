@@ -51,6 +51,8 @@ import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
+import { dismissContextMenu, showContextMenuFallback } from "../contextMenuFallback";
+import { useThreadPortalContainer } from "../threadAppearanceContext";
 import { useClientSettings } from "./useSettings";
 import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
 
@@ -73,6 +75,7 @@ export function useThreadActionMenu(input: {
   readonly canShareWithGuest: boolean;
 }) {
   const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest } = input;
+  const portal = useThreadPortalContainer();
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -383,13 +386,18 @@ export function useThreadActionMenu(input: {
         );
         return;
       }
-      const clicked = await settlePromise(() => api.contextMenu.show(menu.items, position, source));
+      const clicked = await settlePromise(() =>
+        portal === undefined
+          ? api.contextMenu.show(menu.items, position, source)
+          : showContextMenuFallback(menu.items, position, source, portal),
+      );
       if (clicked._tag === "Failure" || clicked.value === null) return;
       await menu.run(clicked.value);
     })();
   };
 
   const closeMenu = () => {
+    if (portal !== undefined) dismissContextMenu();
     void readLocalApi()?.contextMenu.close();
   };
 

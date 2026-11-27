@@ -1,3 +1,4 @@
+import { useThreadPortalContainer } from "~/threadAppearanceContext";
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
 import { cn } from "~/lib/utils";
@@ -64,8 +65,9 @@ function PopoverPopup({
   // Viewport rekeys on close; persistent single-trigger forms need stable containers for drafts and submit
   // guards.
   const Viewport = keepMounted ? "div" : PopoverPrimitive.Viewport;
+  const portal = useThreadPortalContainer();
   return (
-    <PopoverPrimitive.Portal keepMounted={keepMounted} container={container}>
+    <PopoverPrimitive.Portal keepMounted={keepMounted} container={container ?? portal}>
       {touchBackdrop ? (
         // On touch, the backdrop consumes outside taps so closing cannot also activate the control beneath.
         <PopoverPrimitive.Backdrop

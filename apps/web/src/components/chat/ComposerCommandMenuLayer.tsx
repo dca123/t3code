@@ -1,6 +1,7 @@
 import { type ReactNode, useDeferredValue, useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { observeResize } from "~/lib/observeResize";
+import { useThreadPortalContainer } from "~/threadAppearanceContext";
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -34,6 +35,7 @@ export function ComposerCommandMenuLayer(props: {
   canOverflowTop?: boolean;
 }) {
   const { anchor, canOverflowTop = false } = props;
+  const portal = useThreadPortalContainer();
   const [position, setPosition] = useState<ComposerCommandMenuPosition | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the menu from the composer's DOM rect, tracking window resize, scroll and ancestor resizes
@@ -106,6 +108,6 @@ export function ComposerCommandMenuLayer(props: {
     >
       {props.children}
     </div>,
-    document.body,
+    portal ?? document.body,
   );
 }

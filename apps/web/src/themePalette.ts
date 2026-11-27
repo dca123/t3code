@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import { msg } from "gt-react";
+import type { CSSProperties } from "react";
 import "culori/css";
 import { converter, parse } from "culori/fn";
 import {
@@ -1849,20 +1850,21 @@ export function parseThemeHalves(raw: string | null): ThemeHalves | null {
   }
 }
 
-/** One appearance's palette variables, for a subtree that keeps it while the root shows the other. */
-export function themePaletteVariables(
-  theme: ThemePreference,
-  appearance: ThemeAppearance,
-): Readonly<Record<string, string>> {
+export function threadLightPalette(theme: ThemePreference) {
   const palette = getThemeDefinition(theme);
-  const colors = palette ? getThemeColorsForMode(palette, appearance) : null;
-  if (!colors) return {};
-  return Object.fromEntries(
-    (Object.entries(colors) as Array<[ThemeColorRole, string]>).map(([role, value]) => [
-      APP_THEME_VARIABLES[role],
-      value,
-    ]),
-  );
+  const colors = palette && getThemeColorsForMode(palette, "light");
+  const style: CSSProperties & Record<`--${string}`, string> = {
+    ...Object.fromEntries(
+      THEME_COLOR_ROLES.map((role) => [APP_THEME_VARIABLES[role], colors?.[role] ?? "initial"]),
+    ),
+    [CONTEXT_CHIP_MESSAGE_VARIABLE]: "initial",
+    ...contextChipVariables(colors ?? getStandardPaintedThemeColors("light")),
+  };
+  return {
+    "data-thread-light": "",
+    "data-theme-id": colors ? palette?.id : undefined,
+    style,
+  };
 }
 
 export function resolveThemeHalf(

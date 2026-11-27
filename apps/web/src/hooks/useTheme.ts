@@ -2,7 +2,8 @@ import { pipe } from "effect/Function";
 import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
-import { useSyncExternalStore } from "react";
+import { useContext, useSyncExternalStore } from "react";
+import { ThreadAppearanceContext } from "../threadAppearanceContext";
 import {
   applyThemePalette,
   CUSTOM_THEMES_STORAGE_KEY,
@@ -25,19 +26,13 @@ import {
   type ThemeHalves,
   type ThemePreferenceMode,
 } from "../themePalette";
-import {
-  invalidateThreadLightMode,
-  resolveShownAppearanceMode,
-  subscribeThreadLightMode,
-  THREAD_LIGHT_MODE_STORAGE_KEY,
-} from "../threadLightMode";
+import { invalidateThreadLightMode, THREAD_LIGHT_MODE_STORAGE_KEY } from "../threadLightMode";
 
 type Theme = ThemePreference;
 type ThemeSnapshot = {
   theme: Theme;
   resolvedTheme: ThemeAppearance;
-  /** The appearance without a lit thread's override. */
-  savedResolvedTheme: ThemeAppearance;
+
   systemDark: boolean;
   followSystem: boolean;
   appearanceMode: ThemePreferenceMode;
@@ -51,7 +46,7 @@ const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   theme: "system",
   resolvedTheme: "light",
-  savedResolvedTheme: "light",
+
   systemDark: false,
   followSystem: true,
   appearanceMode: "system",
@@ -136,7 +131,7 @@ let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let snapshotStale = true;
 let lastDesktopTheme: "light" | "dark" | "system" | null = null;
-let lastAppliedTheme: Omit<ThemeSnapshot, "resolvedTheme" | "savedResolvedTheme"> | null = null;
+let lastAppliedTheme: Omit<ThemeSnapshot, "resolvedTheme"> | null = null;
 let themeStorageReadFailure: ThemeStorageError | null = null;
 
 function emitChange() {
@@ -288,12 +283,12 @@ function resolveBrowserChromeSurface(): HTMLElement {
 export function syncBrowserChromeTheme() {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
   const rootStyles = getComputedStyle(document.documentElement);
-  const themeChromeColor = document.documentElement.dataset.themeId
-    ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
-    : null;
-  const surfaceColor = normalizeThemeColor(
-    getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
-  );
+  const surface = resolveBrowserChromeSurface();
+  const themeChromeColor =
+    document.documentElement.dataset.themeId || surface.hasAttribute("data-thread-light")
+      ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
+      : null;
+  const surfaceColor = normalizeThemeColor(getComputedStyle(surface).backgroundColor);
   const fallbackColor = normalizeThemeColor(getComputedStyle(document.body).backgroundColor);
   const backgroundColor = themeChromeColor ?? surfaceColor ?? fallbackColor;
   if (!backgroundColor) return;
@@ -317,7 +312,7 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
   if (preservePreview && document.documentElement.dataset?.themeId === THEME_PREVIEW_ID) {
     return;
   }
-  const appearanceMode = resolveShownAppearanceMode(readAppearanceModePreference(theme));
+  const appearanceMode = readAppearanceModePreference(theme);
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
@@ -402,10 +397,6 @@ function syncDesktopTheme(
 
 if (typeof document !== "undefined" && typeof window !== "undefined") {
   applyTheme(getStored());
-  subscribeThreadLightMode(() => {
-    applyTheme(getStored(), { suppressTransitions: true });
-    emitChange();
-  });
 }
 
 function getSnapshot(): ThemeSnapshot {
@@ -416,10 +407,9 @@ function getSnapshot(): ThemeSnapshot {
   const theme = getStored();
   const appearanceMode = readAppearanceModePreference(theme);
   const followSystem = appearanceMode === "system";
-  const shownMode = resolveShownAppearanceMode(appearanceMode);
-  const systemDark = shownMode === "system" || followSystem ? getSystemDark() : false;
+  const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
-  const savedResolvedTheme = resolveThemeAppearance(
+  const resolvedTheme = resolveThemeAppearance(
     theme,
     systemDark,
     followSystem,
@@ -427,19 +417,10 @@ function getSnapshot(): ThemeSnapshot {
     themeHalves,
   );
 
-  // The saved mode drives settings; what renders follows a lit thread too.
-  const resolvedTheme = resolveThemeAppearance(
-    theme,
-    systemDark,
-    shownMode === "system",
-    shownMode,
-    themeHalves,
-  );
   if (
     lastSnapshot &&
     lastSnapshot.theme === theme &&
     lastSnapshot.resolvedTheme === resolvedTheme &&
-    lastSnapshot.savedResolvedTheme === savedResolvedTheme &&
     lastSnapshot.systemDark === systemDark &&
     lastSnapshot.followSystem === followSystem &&
     lastSnapshot.appearanceMode === appearanceMode &&
@@ -451,7 +432,7 @@ function getSnapshot(): ThemeSnapshot {
   lastSnapshot = {
     theme,
     resolvedTheme,
-    savedResolvedTheme,
+
     systemDark,
     followSystem,
     appearanceMode,
@@ -542,13 +523,14 @@ export function getRenderedAppearance(): ThemeAppearance {
 }
 
 export function useRenderedAppearance() {
+  const threadAppearance = useContext(ThreadAppearanceContext);
   const { resolvedTheme } = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const previewAppearance = useSyncExternalStore(
     subscribeToThemePreview,
     getThemePreviewAppearance,
     () => null,
   );
-  return previewAppearance ?? resolvedTheme;
+  return threadAppearance === null ? (previewAppearance ?? resolvedTheme) : "light";
 }
 
 export function setTheme(next: Theme): boolean {
@@ -676,6 +658,7 @@ export function refreshTheme({ preservePreview = false } = {}): void {
 }
 
 export function useTheme() {
+  const threadAppearance = useContext(ThreadAppearanceContext);
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const { theme, resolvedTheme } = snapshot;
 
@@ -699,8 +682,7 @@ export function useTheme() {
     refreshTheme,
     followSystem: snapshot.followSystem,
     appearanceMode: snapshot.appearanceMode,
-    resolvedTheme,
-    savedResolvedTheme: snapshot.savedResolvedTheme,
+    resolvedTheme: threadAppearance === null ? resolvedTheme : "light",
     themeHalves: snapshot.themeHalves,
   } as const;
 }

@@ -2,8 +2,8 @@
 @layer theme, base, clerk, components, utilities;
 @import "tailwindcss";
 
-@custom-variant dark (&:is(.dark, .dark *));
-@custom-variant light (&:not(.dark, .dark *));
+@custom-variant dark (&:is(.dark, .dark *):where(:not([data-thread-light], [data-thread-light] *)));
+@custom-variant light (&:is(:not(.dark, .dark *), [data-thread-light], [data-thread-light] *));
 /* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
 @custom-variant wco (&:is(.wco, .wco *));
 
@@ -1144,7 +1144,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   animation-duration: 0s !important;
 }
 
-:root {
+:root,
+[data-thread-light] {
   color-scheme: light;
   --radius: 0.5rem;
   --background: var(--color-zinc-25);
@@ -1356,7 +1357,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    independent; error, warning, and update roles are themeable below. */
 /* The non-empty marker adds enough specificity to outrank the generated root
    dark variant without reintroducing raw `.dark` selectors. */
-html[data-theme-id]:not([data-theme-id=""]) {
+:is(html, [data-thread-light])[data-theme-id]:not([data-theme-id=""]) {
   --background: var(--app-theme-canvas);
   --app-chrome-background: var(--app-theme-chrome);
   --toolbar-background: var(--app-theme-toolbar);
@@ -1623,7 +1624,8 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
 
 /* Recompute contrast wherever a subtree owns its own semantic color palette. */
 :root,
-[data-app-sidebar] {
+[data-app-sidebar],
+[data-thread-light] {
   --contrast-toolbar-foreground: color-mix(
     in oklab,
     color-mix(
@@ -2370,7 +2372,8 @@ code {
   --app-scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
 }
 
-:root {
+:root,
+[data-thread-light] {
   --diff-addition: var(--success);
   --diff-deletion: var(--destructive);
   --diff-addition-foreground: light-dark(var(--color-emerald-700), var(--color-emerald-400));
@@ -2397,7 +2400,8 @@ code {
   --html-preview-max-width: 100%;
 }
 
-:root[data-diff-color-scheme="blue-orange"] {
+:root[data-diff-color-scheme="blue-orange"],
+:root[data-diff-color-scheme="blue-orange"] [data-thread-light] {
   --diff-addition: light-dark(var(--color-blue-600), var(--color-blue-400));
   --diff-deletion: light-dark(var(--color-orange-600), var(--color-orange-400));
   --diff-addition-foreground: var(--diff-addition);
@@ -2410,6 +2414,13 @@ code {
   --trees-git-added-color-override: var(--diff-addition);
   --trees-git-deleted-color-override: var(--diff-deletion);
   --trees-git-untracked-color-override: var(--diff-addition);
+}
+
+[data-thread-light] {
+  --appearance-contrast-target: black;
+  --app-scrollbar-thumb: rgb(217 217 217);
+  --app-scrollbar-thumb-hover: rgb(191 191 191);
+  color: var(--contrast-foreground);
 }
 
 .diff-render-surface diffs-container {

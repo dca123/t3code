@@ -1,3 +1,4 @@
+import { useThreadPortalContainer } from "~/threadAppearanceContext";
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
 import { useGT } from "gt-react";
 import { XIcon } from "lucide-react";
@@ -79,8 +80,9 @@ function SheetPopup({
       : ({ transitionDuration: `${transitionDurationMs}ms` } satisfies CSSProperties);
   const instant = transitionDurationMs === 0;
 
+  const portal = useThreadPortalContainer();
   return (
-    <SheetPortal keepMounted={keepMounted}>
+    <SheetPortal keepMounted={keepMounted} container={portal}>
       <SheetBackdrop
         className={
           instant

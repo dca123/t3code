@@ -1,3 +1,4 @@
+import { useThreadPortalContainer } from "~/threadAppearanceContext";
 import { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card";
 
 import { cn } from "~/lib/utils";
@@ -19,8 +20,9 @@ function PreviewCardPopup({
   side?: PreviewCardPrimitive.Positioner.Props["side"];
   sideOffset?: PreviewCardPrimitive.Positioner.Props["sideOffset"];
 }) {
+  const portal = useThreadPortalContainer();
   return (
-    <PreviewCardPrimitive.Portal>
+    <PreviewCardPrimitive.Portal container={portal}>
       <PreviewCardPrimitive.Positioner
         align={align}
         className="z-[140] max-w-(--available-width)"

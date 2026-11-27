@@ -1207,10 +1207,13 @@ function TerminalSessionViewport({
         if (!activeTerminal) return;
         activeTerminal.setTheme(terminalThemeFromApp(containerRef.current));
       });
-      themeObserver.observe(document.documentElement, {
+      const themeObserverOptions = {
         attributes: true,
-        attributeFilter: ["class", "style"],
-      });
+        attributeFilter: ["class", "style", "data-thread-light"],
+      };
+      themeObserver.observe(document.documentElement, themeObserverOptions);
+      const threadSurface = containerRef.current?.closest("main");
+      if (threadSurface) themeObserver.observe(threadSurface, themeObserverOptions);
       setupCleanups.push(() => themeObserver.disconnect());
 
       const fitTimer = window.setTimeout(() => {

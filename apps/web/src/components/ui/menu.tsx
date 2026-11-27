@@ -1,3 +1,4 @@
+import { useThreadPortalContainer } from "~/threadAppearanceContext";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import type * as React from "react";
@@ -40,8 +41,9 @@ function MenuPopup({
   keepMounted?: boolean;
   width?: "default" | "content";
 }) {
+  const portal = useThreadPortalContainer();
   return (
-    <MenuPrimitive.Portal keepMounted={keepMounted}>
+    <MenuPrimitive.Portal keepMounted={keepMounted} container={portal}>
       <MenuPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}

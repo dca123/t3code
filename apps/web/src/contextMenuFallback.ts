@@ -246,6 +246,7 @@ export function showContextMenuFallback<T extends string>(
   items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number },
   source?: ContextMenuSource,
+  container = document.body,
 ): Promise<T | null> {
   dismissContextMenu();
   return new Promise<T | null>((resolve) => {
@@ -600,7 +601,7 @@ export function showContextMenuFallback<T extends string>(
       menu.addEventListener("mousedown", swallowThumbButton);
       menu.addEventListener("mouseup", swallowThumbButton);
 
-      document.body.appendChild(menu);
+      container.appendChild(menu);
       menuStack[level] = menu;
       submenuTriggerStack[level] = parentTrigger;
 

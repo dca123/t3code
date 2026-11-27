@@ -1,3 +1,4 @@
+import { useThreadPortalContainer } from "~/threadAppearanceContext";
 import { Autocomplete as AutocompletePrimitive } from "@base-ui/react/autocomplete";
 import { ChevronsUpDownIcon, XIcon } from "lucide-react";
 
@@ -89,8 +90,9 @@ function AutocompletePopup({
   side?: AutocompletePrimitive.Positioner.Props["side"];
   anchor?: AutocompletePrimitive.Positioner.Props["anchor"];
 }) {
+  const portal = useThreadPortalContainer();
   return (
-    <AutocompletePrimitive.Portal>
+    <AutocompletePrimitive.Portal container={portal}>
       <AutocompletePrimitive.Positioner
         align={align}
         alignOffset={alignOffset}
