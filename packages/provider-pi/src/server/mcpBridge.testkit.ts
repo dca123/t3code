@@ -117,6 +117,7 @@ export async function loadMcpBridge(
     },
     AbortSignal,
     AbortController,
+    performance,
     NodeChildProcess,
     NodeCrypto,
     NodePath,

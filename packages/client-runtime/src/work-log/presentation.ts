@@ -3,6 +3,7 @@ import {
   isToolLifecycleItemType,
   type AssetResource,
   type RuntimeItemStatus,
+  type OrchestrationV2Notification,
   type ToolActivitySource,
   type ToolActivitySurface,
   type ToolActivityIcon,
@@ -34,6 +35,17 @@ import { t3ToolSentence } from "./t3ToolSentences.ts";
 import type { MFunctionType } from "gt-i18n/types";
 
 export type WorkLogToolLifecycleStatus = RuntimeItemStatus | "stopped" | "idle";
+
+export function notificationSummary(
+  { source, summary }: Pick<OrchestrationV2Notification, "source" | "summary">,
+  resolve: MFunctionType = mFallback,
+): string {
+  if (source.kind !== "command" || source.exit === undefined) return summary;
+  const { title, code } = source.exit;
+  if (code === 0) return resolve(msg("Completed: {title}", { title }));
+  if (code === null) return resolve(msg("Ended without an exit code: {title}", { title }));
+  return resolve(msg("Failed (exit code {code}): {title}", { title, code: String(code) }));
+}
 
 export function toolItemForDisplay(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   switch (item.type) {

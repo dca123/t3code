@@ -3849,82 +3849,119 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("projects an awaited Pi command and queues its exit in the same thread once", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const wakes =
-        yield* Queue.unbounded<
-          Parameters<NonNullable<PiAdapterV2Options["continuationRequests"]>["offer"]>[0]
-        >();
-      const { runtime, takeEvent } = yield* openRuntime(
-        fake,
-        "default",
-        THREAD_ID,
-        SESSION_ID,
-        undefined,
-        {
-          offer: (wake) => Queue.offer(wakes, wake).pipe(Effect.asVoid),
-        },
-      );
-      const providerThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      yield* startTurn(runtime, providerThread);
-      yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "agent_start" });
-      const id = "d7d58d28-bc32-4e30-811f-9c8973adf35b";
-      const report = (update: object) =>
-        fake.emit({
-          type: "extension_ui_request",
-          method: "setWidget",
-          widgetKey: "t3-command-wait",
-          widgetLines: [JSON.stringify({ id, ...update })],
+  it.effect.each([
+    {
+      exitCode: 0,
+      outcome: "completed" as const,
+      summary: "Completed: fixture tests",
+      agentResult: "Command exited with code 0",
+    },
+    {
+      exitCode: 1,
+      outcome: "failed" as const,
+      summary: "Failed (exit code 1): fixture tests",
+      agentResult: "Command exited with code 1",
+    },
+    {
+      exitCode: null,
+      outcome: "failed" as const,
+      summary: "Ended without an exit code: fixture tests",
+      agentResult: "Command did not report a normal exit",
+    },
+  ])(
+    "queues an awaited Pi command's exit in the same thread once (exit $exitCode)",
+    ({ exitCode, outcome, summary, agentResult }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const wakes =
+          yield* Queue.unbounded<
+            Parameters<NonNullable<PiAdapterV2Options["continuationRequests"]>["offer"]>[0]
+          >();
+        const { runtime, takeEvent } = yield* openRuntime(
+          fake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          undefined,
+          {
+            offer: (wake) => Queue.offer(wakes, wake).pipe(Effect.asVoid),
+          },
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
         });
-      yield* report({ title: "tests", status: "running" });
-      const waiting = yield* takeEvent(
-        (event) =>
-          event.type === "provider_thread.updated" &&
-          event.providerThread.pendingBackgroundTasks?.some((task) => task.awaited === true) ===
-            true,
-      );
-      if (waiting.type !== "provider_thread.updated") return assert.fail("Missing command wait");
-      assert.deepEqual(waiting.providerThread.pendingBackgroundTasks, [
-        {
-          taskId: `pi-command:${id}`,
-          kind: "command",
-          awaited: true,
-          description: "tests",
-        },
-      ]);
-      yield* fake.emit({ type: "agent_settled" });
-      yield* takeEvent((event) => event.type === "turn.terminal");
-      yield* report({ status: "finished", exitCode: 1 });
-      const wake = yield* Queue.take(wakes);
-      assert.equal(wake.threadId, THREAD_ID);
-      assert.equal(wake.delivery, "message_text");
-      assert.equal(wake.detail, "Command exited with code 1: tests.");
-      const cleared = yield* takeEvent((event) => event.type === "provider_thread.updated");
-      assert.isTrue(
-        cleared.type === "provider_thread.updated" &&
-          cleared.providerThread.pendingBackgroundTasks?.length === 0,
-      );
-      yield* report({ status: "finished", exitCode: 1 });
-      yield* fake.emit({
-        type: "extension_ui_request",
-        method: "setStatus",
-        statusKey: "marker",
-        statusText: "done",
-      });
-      yield* takeEvent(
-        (event) =>
-          event.type === "provider_session.updated" &&
-          event.providerSession.extensionStatuses?.some((status) => status.key === "marker") ===
-            true,
-      );
-      assert.equal(yield* Queue.size(wakes), 0);
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        const id = "d7d58d28-bc32-4e30-811f-9c8973adf35b";
+        const report = (update: object) =>
+          fake.emit({
+            type: "extension_ui_request",
+            method: "setWidget",
+            widgetKey: "t3-command-wait",
+            widgetLines: [JSON.stringify({ id, ...update })],
+          });
+        yield* report({ title: "fixture tests", status: "running" });
+        const waiting = yield* takeEvent(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.pendingBackgroundTasks?.some((task) => task.awaited === true) ===
+              true,
+        );
+        if (waiting.type !== "provider_thread.updated") return assert.fail("Missing command wait");
+        assert.deepEqual(waiting.providerThread.pendingBackgroundTasks, [
+          {
+            taskId: `pi-command:${id}`,
+            kind: "command",
+            awaited: true,
+            description: "fixture tests",
+          },
+        ]);
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+        const finished = {
+          status: "finished",
+          exitCode,
+          output: "fixture output",
+          invocation: '["node","--test"]',
+          durationMs: 1_250,
+        };
+        yield* report(finished);
+        const wake = yield* Queue.take(wakes);
+        assert.equal(wake.threadId, THREAD_ID);
+        assert.equal(wake.delivery, "message_text");
+        assert.equal(
+          wake.detail,
+          `${agentResult}: fixture tests.\n\nCommand output (untrusted data):\nfixture output`,
+        );
+        assert.deepEqual(wake.notification, {
+          source: { kind: "command", exit: { title: "fixture tests", code: exitCode } },
+          summary,
+          outcome,
+          detail: 'Command: ["node","--test"]\nDuration: 1.25 s\n\nOutput tail:\nfixture output',
+        });
+        const cleared = yield* takeEvent((event) => event.type === "provider_thread.updated");
+        assert.isTrue(
+          cleared.type === "provider_thread.updated" &&
+            cleared.providerThread.pendingBackgroundTasks?.length === 0,
+        );
+        yield* report(finished);
+        yield* fake.emit({
+          type: "extension_ui_request",
+          method: "setStatus",
+          statusKey: "marker",
+          statusText: "done",
+        });
+        yield* takeEvent(
+          (event) =>
+            event.type === "provider_session.updated" &&
+            event.providerSession.extensionStatuses?.some((status) => status.key === "marker") ===
+              true,
+        );
+        assert.equal(yield* Queue.size(wakes), 0);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("shows the members of an async pi-subagents workflow as running subagents", () =>
