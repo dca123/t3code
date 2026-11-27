@@ -1447,7 +1447,12 @@ const SubagentNotificationSource = Schema.Struct({
   kind: Schema.Literal("subagent"),
   childThreadId: Schema.optional(ThreadId),
 });
-const CommandNotificationSource = Schema.Struct({ kind: Schema.Literal("command") });
+const CommandNotificationSource = Schema.Struct({
+  kind: Schema.Literal("background_command").transform("command"),
+  exit: Schema.optional(
+    Schema.Struct({ title: TrimmedNonEmptyString, code: Schema.NullOr(Schema.Int) }),
+  ),
+});
 const OrchestrationV2NotificationOutcome = Schema.Literals([
   "completed",
   "failed",
@@ -1497,9 +1502,9 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
         })),
       }),
     ),
-    Schema.Struct({ kind: Schema.Literal("background_command").transform("command") }),
-    SubagentNotificationSource,
     CommandNotificationSource,
+    SubagentNotificationSource,
+    Schema.toType(CommandNotificationSource),
     Schema.Struct({
       kind: Schema.Literal("monitor"),
       pullRequest: Schema.optional(MonitorPullRequestStamp),

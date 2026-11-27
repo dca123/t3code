@@ -212,6 +212,12 @@ export interface PiAdapterV2Options {
   };
 }
 
+function commandWaitSummary(title: string, code: number | null): string {
+  if (code === 0) return `Completed: ${title}`;
+  if (code === null) return `Ended without an exit code: ${title}`;
+  return `Failed (exit code ${code}): ${title}`;
+}
+
 function contentText(content: unknown): string {
   if (!Array.isArray(content)) {
     return typeof content === "string" ? content : "";
@@ -2307,27 +2313,42 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return;
         }
         if (status !== "finished" || task === undefined) return;
-        const exitCode = recordNumber(update, "exitCode");
-        const summary =
-          exitCode === undefined
-            ? "Command did not report a normal exit"
-            : `Command exited with code ${exitCode}`;
         const output = recordString(update, "output")?.slice(0, 4_100);
         yield* updateProviderThread(state, {
           pendingBackgroundTasks: tasks.filter((task) => task.taskId !== taskId),
         });
         if (continuationRequests !== undefined) {
+          const reportedCode = recordNumber(update, "exitCode");
+          const code =
+            reportedCode !== undefined && Number.isInteger(reportedCode) ? reportedCode : null;
+          const title = task.description ?? "Command";
+          const result =
+            code === null
+              ? "Command did not report a normal exit"
+              : `Command exited with code ${code}`;
+          const invocation = recordString(update, "invocation")?.slice(0, 2_000);
+          const durationMs = recordNumber(update, "durationMs");
+          const execution = [
+            invocation && `Command: ${invocation}`,
+            durationMs === undefined ? undefined : `Duration: ${durationMs / 1_000} s`,
+          ]
+            .filter(Boolean)
+            .join("\n");
+          const detail = [execution, output && `Output tail:\n${output}`]
+            .filter(Boolean)
+            .join("\n\n");
           yield* continuationRequests.offer({
             threadId,
             providerThreadId: state.providerThread.id,
             driver: PI_PROVIDER,
             messageId: MessageId.make(`message:${taskId}`),
             delivery: "message_text",
-            detail: `${summary}: ${task.description ?? taskId}.${output ? `\n\nCommand output (untrusted data):\n${output}` : ""}`,
+            detail: `${result}: ${task.description ?? taskId}.${output ? `\n\nCommand output (untrusted data):\n${output}` : ""}`,
             notification: {
-              source: { kind: "background_task" },
-              outcome: exitCode === 0 ? "completed" : "failed",
-              summary,
+              source: { kind: "command", exit: { title, code } },
+              outcome: code === 0 ? "completed" : "failed",
+              summary: commandWaitSummary(title, code),
+              ...(detail ? { detail } : {}),
             },
           });
         }

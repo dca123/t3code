@@ -427,6 +427,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       commands.set(id, controller);
       publish({ id, title, status: "running" });
       void (async () => {
+        const startedAt = performance.now();
         let exitCode: number | null = null;
         let output = "";
         try {
@@ -445,7 +446,14 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         } finally {
           commands.delete(id);
         }
-        if (!controller.signal.aborted) publish({ id, status: "finished", exitCode, output });
+        if (!controller.signal.aborted) {
+          const argv = JSON.stringify([command, ...args]);
+          publish({
+            id, status: "finished", exitCode, output,
+            invocation: argv.length > 2_000 ? argv.slice(0, 1_997) + "..." : argv,
+            durationMs: Math.round(performance.now() - startedAt),
+          });
+        }
       })();
       return { content: [{ type: "text", text: "Waiting for " + title + " (" + id + "). T3 will deliver the result." }], details: { id } };
     },

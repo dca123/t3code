@@ -21,6 +21,7 @@ import {
 } from "@t3tools/client-runtime/work-log/command-label";
 import {
   commandlessCommandLabel,
+  notificationSummary,
   genericCommandStatusLabel,
   liveActivityToolStatus,
   normalizeCompactToolLabel,
@@ -153,6 +154,9 @@ export function workEntryDisplayLabel(
   resolve: MessageResolver = m,
 ) {
   if (entry.itemType === "system_notice") return entry.label;
+  if (entry.structuredPayload?.type === "notification") {
+    return notificationSummary(entry.structuredPayload, resolve);
+  }
   if (entry.itemType === "reasoning" || entry.tone === "thinking") {
     const thought = entry.detail?.trim().replace(/\s+/g, " ");
     return thought || entry.label;

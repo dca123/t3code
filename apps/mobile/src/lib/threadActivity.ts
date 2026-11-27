@@ -23,6 +23,7 @@ import {
   commandlessCommandLabel,
   contextCompactionLabel,
   liveThoughtLine,
+  notificationSummary,
   toolItemForDisplay,
   workEntryDisplayIndicatesToolFailure,
   liveActivityToolStatus,
@@ -655,7 +656,7 @@ function itemSummary(
   toolPresentation: T3McpToolPresentation | null,
   resolve: MessageResolver,
 ): string {
-  if (item.type === "notification") return item.summary;
+  if (item.type === "notification") return notificationSummary(item, resolve);
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item, resolve);
   const title =
