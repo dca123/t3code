@@ -16,6 +16,15 @@ Shared vocabulary across T3 Code. Architecture and lifecycle constraints belong 
 | Turn           | One user-to-agent cycle (a run). Provider work can end before checkpoint and diff work settles.   |
 | T3 home        | The base data directory. Runtime state normally lives under its `userdata` directory.             |
 
+## Voice calls
+
+| Term       | Meaning                                                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------ |
+| Voice call | A live audio conversation bound to one thread. It stays bound to that thread until hung up.      |
+| Voice      | The realtime model that talks with the user on a voice call and answers small requests itself.   |
+| Agent      | On a voice call, the thread's own provider agent, which does the call's real work.               |
+| Handoff    | The voice asking the agent to do something. Each handoff is one agent turn in the call's thread. |
+
 ## Orchestration
 
 | Term                    | Meaning                                                                                                   |
