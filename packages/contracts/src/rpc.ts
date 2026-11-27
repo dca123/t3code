@@ -7,6 +7,12 @@ import {
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
+  ThreadVoiceEndInput,
+  ThreadVoiceError,
+  ThreadVoiceStartInput,
+  ThreadVoiceStartResult,
+} from "./threadVoice.ts";
+import {
   McpAppCallToolInput,
   McpAppCallToolResult,
   McpAppReadResourceInput,
@@ -591,6 +597,8 @@ export const WS_METHODS = {
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
+  threadVoiceStart: "threadVoice.start",
+  threadVoiceEnd: "threadVoice.end",
   serverGetNpmRelease: "server.getNpmRelease",
   serverRefreshProviders: "server.refreshProviders",
   serverGetProviderRuntimeModeLimits: "server.getProviderRuntimeModeLimits",
@@ -767,6 +775,17 @@ const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
   success: Schema.Struct({
     serverTime: Schema.optionalKey(IsoDateTime),
   }),
+  error: EnvironmentAuthorizationError,
+});
+
+const WsThreadVoiceStartRpc = Rpc.make(WS_METHODS.threadVoiceStart, {
+  payload: ThreadVoiceStartInput,
+  success: ThreadVoiceStartResult,
+  error: Schema.Union([ThreadVoiceError, EnvironmentAuthorizationError]),
+});
+const WsThreadVoiceEndRpc = Rpc.make(WS_METHODS.threadVoiceEnd, {
+  payload: ThreadVoiceEndInput,
+  success: Schema.Void,
   error: EnvironmentAuthorizationError,
 });
 
@@ -2523,6 +2542,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
+  WsThreadVoiceStartRpc,
+  WsThreadVoiceEndRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,

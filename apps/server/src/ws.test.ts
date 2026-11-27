@@ -69,6 +69,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.ts";
 import * as Ws from "./ws.ts";
+import * as ThreadVoiceCalls from "./voice/ThreadVoiceCalls.ts";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -953,6 +954,7 @@ it.live.each([
     Effect.gen(function* () {
       const services = Layer.mergeAll(
         layerUnusedConfigRpcServices,
+        ThreadVoiceCalls.layerDisabled,
         Layer.mock(ServerBrowser.ServerBrowser)({
           profileReporter: Effect.succeed(() => Effect.void),
         }),

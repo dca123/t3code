@@ -152,6 +152,9 @@ import { useDictationShortcut } from "../../speech/useDictationShortcut";
 import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmissionShortcut";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
+import { ThreadVoiceCallButton } from "./ThreadVoiceCallButton";
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "../../state/server";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand, type ShortcutMatchContext } from "../../keybindings";
 import {
@@ -1984,12 +1987,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     activePendingIsResponding ||
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  const [threadVoiceActive, setThreadVoiceActive] = useState(false);
+  const threadVoiceEnabled =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.threadVoiceCalls === true &&
+    activeThreadId !== null &&
+    activeThread !== null &&
+    !hiddenThread;
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectId: activeProjectId,
     projectName,
     ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
-    disabled: dictationDisabled,
+    disabled: dictationDisabled || threadVoiceActive,
     label: activeThread?.title ?? null,
     presented: !hiddenThread,
     // A question's answer lives only in this composer, so only the thread draft outlives it.
@@ -2060,7 +2069,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const dictationShortcutLabel = useDictationShortcut({
     keybindings,
     speech: speechInput,
-    disabled: dictationDisabled,
+    disabled: dictationDisabled || threadVoiceActive,
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
     ...(backgroundThread ? { targetRef: composerFormRef } : {}),
@@ -4133,6 +4142,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
+                  {/* Switching from Send to Stop must not unmount the active call. */}
+                  {threadVoiceEnabled ? (
+                    <ThreadVoiceCallButton
+                      key={`voice:${environmentId}:${activeThreadId}`}
+                      environmentId={environmentId}
+                      threadId={activeThreadId}
+                      blocked={dictationDisabled || voiceInputActive || isEditingQueuedMessage}
+                      onActiveChange={setThreadVoiceActive}
+                    />
+                  ) : null}
                   <ComposerFooterPrimaryActions
                     // Stop state belongs to one thread; the composer stays mounted across threads.
                     key={`${environmentId}:${activeThreadId ?? "new"}`}
@@ -4179,27 +4198,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onToggleKeepFullHistory={props.onToggleKeepFullHistory}
                   >
                     {speechInput.available ? (
-                      <>
-                        <ComposerSpeechRecordingPill
-                          state={speechInput.state}
-                          progress={null}
-                          finishShortcutLabel={dictationShortcutLabel}
-                          cancelShortcutLabel="Esc"
-                          level={speechInput.level}
-                          recordingStartedAt={speechInput.recordingStartedAt}
-                          disabled={dictationDisabled}
-                          onStart={() => void speechInput.start()}
-                          onStop={() => void speechInput.stop()}
-                          onCancel={() => speechInput.cancel()}
-                          onSkipPostProcessing={() => speechInput.skipPostProcessing()}
-                        />
-                        <ComposerSpeechButton
-                          state={speechInput.state}
-                          shortcutLabel={dictationShortcutLabel}
-                          disabled={dictationDisabled}
-                          onStart={() => void speechInput.start()}
-                        />
-                      </>
+                      <ComposerSpeechRecordingPill
+                        state={speechInput.state}
+                        progress={null}
+                        finishShortcutLabel={dictationShortcutLabel}
+                        cancelShortcutLabel="Esc"
+                        level={speechInput.level}
+                        recordingStartedAt={speechInput.recordingStartedAt}
+                        disabled={dictationDisabled}
+                        onStart={() => void speechInput.start()}
+                        onStop={() => void speechInput.stop()}
+                        onCancel={() => speechInput.cancel()}
+                        onSkipPostProcessing={() => speechInput.skipPostProcessing()}
+                      />
+                    ) : null}
+                    {!threadVoiceEnabled && speechInput.available ? (
+                      <ComposerSpeechButton
+                        state={speechInput.state}
+                        shortcutLabel={dictationShortcutLabel}
+                        disabled={dictationDisabled}
+                        onStart={() => void speechInput.start()}
+                      />
                     ) : null}
                     <VoiceInputSetup
                       environmentId={speechInput.transcriptionEnvironmentId}
