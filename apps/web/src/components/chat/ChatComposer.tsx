@@ -1988,6 +1988,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingIsResponding ||
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const [threadVoiceActive, setThreadVoiceActive] = useState(false);
+  const [threadVoiceStatusTarget, setThreadVoiceStatusTarget] = useState<HTMLDivElement | null>(
+    null,
+  );
   const threadVoiceEnabled =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.threadVoiceCalls === true &&
     activeThreadId !== null &&
@@ -4095,6 +4098,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
+            {threadVoiceEnabled ? <div ref={setThreadVoiceStatusTarget} /> : null}
 
             {speechInput.preview ? (
               // column-reverse pins the scroll to the bottom; the single inner div keeps the text in normal order.
@@ -4148,8 +4152,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       key={`voice:${environmentId}:${activeThreadId}`}
                       environmentId={environmentId}
                       threadId={activeThreadId}
+                      available={routeKind === "server"}
                       blocked={dictationDisabled || voiceInputActive || isEditingQueuedMessage}
                       onActiveChange={setThreadVoiceActive}
+                      statusTarget={threadVoiceStatusTarget}
                     />
                   ) : null}
                   <ComposerFooterPrimaryActions
