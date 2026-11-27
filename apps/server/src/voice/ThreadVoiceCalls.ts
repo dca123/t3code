@@ -2,21 +2,25 @@ import {
   CommandId,
   EventId,
   MessageId,
+  THREAD_VOICE_MAX_DURATION_MS,
   ThreadVoiceError,
   TurnItemId,
   type ThreadId,
   type RunId,
+  type ThreadVoiceReportInput,
   type ThreadVoiceStartInput,
   type ThreadVoiceStartResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Config from "effect/Config";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
@@ -32,6 +36,7 @@ type CallConnection = {
     input: typeof ThreadVoiceStartInput.Type,
   ) => Effect.Effect<typeof ThreadVoiceStartResult.Type, ThreadVoiceError>;
   readonly end: (callId: string) => Effect.Effect<void>;
+  readonly report: (input: typeof ThreadVoiceReportInput.Type) => Effect.Effect<void>;
 };
 
 export class ThreadVoiceCalls extends Context.Service<
@@ -45,6 +50,7 @@ export const disabledConnection: CallConnection = {
   enabled: false,
   start: () => Effect.fail(new ThreadVoiceError({ reason: "disabled" })),
   end: () => Effect.void,
+  report: () => Effect.void,
 };
 export const layerDisabled = Layer.succeed(ThreadVoiceCalls, {
   connection: Effect.succeed(disabledConnection),
@@ -72,6 +78,7 @@ const make = Effect.gen(function* () {
     thread: NonNullable<Effect.Success<ReturnType<typeof threads.getThreadShell>>>,
     ready: Deferred.Deferred<typeof ThreadVoiceStartResult.Type, ThreadVoiceError>,
   ) {
+    yield* Effect.annotateCurrentSpan({ callId: input.callId, threadId: input.threadId });
     const offer = yield* GptLiveCall.open(input.sdp).pipe(Effect.provideContext(fileContext));
     yield* Deferred.succeed(ready, { sdp: offer.sdp });
     yield* Effect.logDebug("Thread voice call created");
@@ -293,6 +300,7 @@ const make = Effect.gen(function* () {
     let current: { id: string; scope: Scope.Closeable } | null = null;
     const start: CallConnection["start"] = Effect.fn("ThreadVoiceCalls.start")(function* (input) {
       if (!enabled) return yield* new ThreadVoiceError({ reason: "disabled" });
+      yield* Effect.annotateCurrentSpan({ callId: input.callId, threadId: input.threadId });
       const thread = yield* threads
         .getThreadShell(input.threadId)
         .pipe(Effect.mapError(GptLiveCall.connectionFailure));
@@ -313,15 +321,23 @@ const make = Effect.gen(function* () {
           });
           yield* runCall(input, thread, ready).pipe(
             Effect.scoped,
-            Effect.timeoutOption("5 minutes"),
-            Effect.onExit((exit) =>
-              Deferred.complete(
-                ready,
-                Exit.isFailure(exit)
-                  ? Effect.failCause(exit.cause)
-                  : Effect.fail(GptLiveCall.connectionFailure()),
-              ),
-            ),
+            Effect.timeoutOption(THREAD_VOICE_MAX_DURATION_MS),
+            Effect.onExit((exit) => {
+              let reason = "upstream-failed";
+              if (Exit.isSuccess(exit))
+                reason = Option.isNone(exit.value) ? "expired" : "upstream-ended";
+              else if (Cause.hasInterruptsOnly(exit.cause)) reason = "cancelled";
+              return Effect.withSpan(
+                Deferred.complete(
+                  ready,
+                  Exit.isFailure(exit)
+                    ? Effect.failCause(exit.cause)
+                    : Effect.fail(GptLiveCall.connectionFailure()),
+                ),
+                "ThreadVoiceCalls.finished",
+                { attributes: { callId: input.callId, threadId: input.threadId, reason } },
+              );
+            }),
             Effect.ensuring(release),
             Effect.interruptible,
             Effect.forkIn(scope, { startImmediately: true }),
@@ -331,9 +347,17 @@ const make = Effect.gen(function* () {
       return yield* Deferred.await(ready);
     });
     const end = Effect.fn("ThreadVoiceCalls.end")(function* (callId: string) {
+      yield* Effect.annotateCurrentSpan({ callId });
       if (current?.id === callId) yield* Scope.close(current.scope, Exit.void);
     });
-    return { enabled, start, end };
+    const report: CallConnection["report"] = Effect.fn("ThreadVoiceCalls.report")(function* ({
+      callId,
+      threadId,
+      observation: { _tag, ...fields },
+    }) {
+      yield* Effect.annotateCurrentSpan({ callId, threadId, observation: _tag, ...fields });
+    });
+    return { enabled, start, end, report };
   });
   return ThreadVoiceCalls.of({ connection });
 });

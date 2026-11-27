@@ -9,6 +9,7 @@ import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
   ThreadVoiceEndInput,
   ThreadVoiceError,
+  ThreadVoiceReportInput,
   ThreadVoiceStartInput,
   ThreadVoiceStartResult,
 } from "./threadVoice.ts";
@@ -599,6 +600,7 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   threadVoiceStart: "threadVoice.start",
   threadVoiceEnd: "threadVoice.end",
+  threadVoiceReport: "threadVoice.report",
   serverGetNpmRelease: "server.getNpmRelease",
   serverRefreshProviders: "server.refreshProviders",
   serverGetProviderRuntimeModeLimits: "server.getProviderRuntimeModeLimits",
@@ -785,6 +787,11 @@ const WsThreadVoiceStartRpc = Rpc.make(WS_METHODS.threadVoiceStart, {
 });
 const WsThreadVoiceEndRpc = Rpc.make(WS_METHODS.threadVoiceEnd, {
   payload: ThreadVoiceEndInput,
+  success: Schema.Void,
+  error: EnvironmentAuthorizationError,
+});
+const WsThreadVoiceReportRpc = Rpc.make(WS_METHODS.threadVoiceReport, {
+  payload: ThreadVoiceReportInput,
   success: Schema.Void,
   error: EnvironmentAuthorizationError,
 });
@@ -2544,6 +2551,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsThreadVoiceStartRpc,
   WsThreadVoiceEndRpc,
+  WsThreadVoiceReportRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,

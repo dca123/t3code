@@ -2050,6 +2050,7 @@ export const layerWsRpc = (
       const handlers = ServerWsRpcGroup.of({
         [WS_METHODS.threadVoiceStart]: (input) => voiceConnection.start(input),
         [WS_METHODS.threadVoiceEnd]: (input) => voiceConnection.end(input.callId),
+        [WS_METHODS.threadVoiceReport]: (input) => voiceConnection.report(input),
         [WS_METHODS.issuesList]: (input) => issues.list(input),
         [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
         [WS_METHODS.issuesComments]: (input) => issues.comments(input),

@@ -40,6 +40,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverGetConfig]: "server",
   [WS_METHODS.threadVoiceStart]: "threadVoice",
   [WS_METHODS.threadVoiceEnd]: "threadVoice",
+  [WS_METHODS.threadVoiceReport]: "threadVoice",
   [WS_METHODS.serverGetNpmRelease]: "server",
   [WS_METHODS.serverRefreshProviders]: "server",
   [WS_METHODS.serverUpdateProvider]: "server",

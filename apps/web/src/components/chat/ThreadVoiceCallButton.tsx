@@ -6,19 +6,28 @@ import {
 import {
   type EnvironmentId,
   type ThreadId,
+  type ThreadVoiceEndReason,
+  type ThreadVoiceObservation,
+  type ThreadVoicePhase,
+  THREAD_VOICE_MAX_DURATION_MS,
   ThreadVoiceError,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import * as Schema from "effect/Schema";
-import { PhoneIcon, PhoneOffIcon } from "lucide-react";
+import { MicIcon, PhoneIcon, PhoneOffIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
-import { toastManager } from "../ui/toast";
+import {
+  emptyVoiceActivity,
+  receiveVoiceActivity,
+  type VoiceActivity,
+} from "./threadVoiceActivity";
 
 const startCall = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "thread-voice:start",
@@ -28,7 +37,96 @@ const endCall = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "thread-voice:end",
   tag: WS_METHODS.threadVoiceEnd,
 });
+const reportCall = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "thread-voice:report",
+  tag: WS_METHODS.threadVoiceReport,
+});
+const quietCommand = { reportFailure: false, reportDefect: false };
 const isThreadVoiceError = Schema.is(ThreadVoiceError);
+
+type CallDisplay =
+  | { readonly kind: "idle" }
+  | { readonly kind: "active"; readonly phase: ThreadVoicePhase }
+  | { readonly kind: "ended"; readonly reason: ThreadVoiceEndReason };
+
+type Translate = ReturnType<typeof useGT>;
+
+function phaseLabel(gt: Translate, phase: ThreadVoicePhase) {
+  switch (phase) {
+    case "microphone":
+      return gt("Opening microphone…");
+    case "gathering":
+      return gt("Gathering network candidates…");
+    case "placing":
+      return gt("Placing call…");
+    case "connecting":
+      return gt("Connecting audio…");
+    case "connected":
+      return gt("Voice call connected");
+    case "reconnecting":
+      return gt("Voice connection interrupted. Reconnecting…");
+  }
+}
+
+function endMessage(gt: Translate, reason: ThreadVoiceEndReason) {
+  switch (reason) {
+    case "hung-up":
+      return gt("You hung up.");
+    case "left-thread":
+      return gt("You left the thread.");
+    case "expired":
+      return gt("The call reached its time limit. Start another call to continue.");
+    case "microphone-blocked":
+      return /mac/i.test(navigator.platform)
+        ? gt(
+            "Microphone access is blocked. Allow it in System Settings → Privacy & Security → Microphone, then retry.",
+          )
+        : gt(
+            "Microphone access is blocked. Allow access in your browser or system settings, then retry.",
+          );
+    case "microphone-unavailable":
+      return gt("Could not open the microphone. Connect or select an input device, then retry.");
+    case "microphone-ended":
+      return gt("The microphone stopped. Check your input device, then start a new call.");
+    case "thread-unavailable":
+      return gt(
+        "This thread cannot take a call yet. Send its first message or open an active thread.",
+      );
+    case "sign-in":
+      return gt("Sign in to Codex with ChatGPT, then try the call again.");
+    case "busy":
+      return gt("A call is already open. Hang up there before starting another.");
+    case "disabled":
+      return gt("Voice calls are off on this server.");
+    case "playback-blocked":
+      return gt("Call audio could not play. Check your sound settings, then retry.");
+    case "remote-ended":
+      return gt("ChatGPT voice ended the call. Start a new call to continue.");
+    case "connection-lost":
+      return gt("The voice connection was lost. Start a new call to continue.");
+    case "setup-timeout":
+      return gt("The call took too long to connect. Check your connection and try again.");
+    case "connection":
+      return gt("Could not connect to ChatGPT voice. Check your connection and try again.");
+  }
+}
+
+function CallClock({ deadline }: { readonly deadline: number }) {
+  const gt = useGT();
+  const [now, setNow] = useState(Date.now);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refresh the remaining time from the system clock
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const remaining = Math.max(0, Math.ceil((deadline - now) / 1000));
+  const time = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`;
+  return (
+    <span className="shrink-0 tabular-nums text-muted-foreground">
+      {gt("{time} left", { time })}
+    </span>
+  );
+}
 
 function waitForCandidates(peer: RTCPeerConnection, signal: AbortSignal) {
   if (peer.iceGatheringState === "complete" || signal.aborted) return Promise.resolve();
@@ -51,84 +149,101 @@ function waitForCandidates(peer: RTCPeerConnection, signal: AbortSignal) {
 export function ThreadVoiceCallButton({
   environmentId,
   threadId,
+  available,
   blocked,
   onActiveChange,
+  statusTarget,
 }: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly available: boolean;
   readonly blocked: boolean;
   readonly onActiveChange: (active: boolean) => void;
+  readonly statusTarget: HTMLDivElement | null;
 }) {
   const gt = useGT();
-  const start = useAtomCommand(startCall, { reportFailure: false, reportDefect: false });
-  const end = useAtomCommand(endCall, { reportFailure: false, reportDefect: false });
+  const start = useAtomCommand(startCall, quietCommand);
+  const end = useAtomCommand(endCall, quietCommand);
+  const report = useAtomCommand(reportCall, quietCommand);
   const allowed = useAtomValue(startCall.permissionAtom(environmentId));
-  const [phase, setPhase] = useState<"idle" | "connecting" | "live">("idle");
-  const current = useRef<(() => void) | null>(null);
+  const [display, setDisplay] = useState<CallDisplay>({ kind: "idle" });
+  const [micName, setMicName] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<number | null>(null);
+  const [activity, setActivity] = useState(emptyVoiceActivity);
+  const meter = useRef<HTMLMeterElement>(null);
+  const current = useRef<((reason: ThreadVoiceEndReason) => void) | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases microphone and peer when this thread's composer unmounts
-  useEffect(() => () => current.current?.(), []);
-
-  const hangUp = () => {
-    current.current?.();
-    setPhase("idle");
-  };
-
-  const fail = (description: string) => {
-    hangUp();
-    toastManager.add({ type: "error", title: gt("Voice call ended"), description });
-  };
-
-  const callFailure = (error: unknown) => {
-    if (isThreadVoiceError(error)) {
-      switch (error.reason) {
-        case "sign-in":
-          return gt("Sign in to Codex with ChatGPT, then try the call again.");
-        case "busy":
-          return gt("A call is already open. Hang up there before starting another.");
-        case "thread-unavailable":
-          return gt("This thread cannot receive a voice call.");
-        case "disabled":
-          return gt("Voice calls are off on this server.");
-        case "connection":
-          break;
-      }
-    }
-    return gt("Could not connect to ChatGPT voice. Check your connection and try again.");
-  };
+  useEffect(() => () => current.current?.("left-thread"), []);
 
   const placeCall = async () => {
     if (current.current !== null || blocked || !allowed) return;
+    const callId = randomUUID();
+    const observe = (observation: ThreadVoiceObservation) => {
+      void report({ environmentId, input: { callId, threadId, observation } });
+    };
+    if (!available) {
+      observe({ _tag: "end", reason: "thread-unavailable" });
+      setDisplay({ kind: "ended", reason: "thread-unavailable" });
+      return;
+    }
     const cancellation = new AbortController();
     const { signal } = cancellation;
-    const callId = randomUUID();
+    const playback = new Audio();
     let mic: MediaStream | null = null;
     let peer: RTCPeerConnection | null = null;
-    let audio: HTMLAudioElement | null = null;
     let serverRequested = false;
-    const deadline = setTimeout(() => fail(callFailure(null)), 70_000);
-    const dispose = () => {
+    let audioContext: AudioContext | null = null;
+    let samples: ReturnType<typeof setInterval> | undefined;
+    let expiration: ReturnType<typeof setTimeout> | undefined;
+    let connectionGrace: ReturnType<typeof setTimeout> | undefined;
+    let phase: ThreadVoicePhase | null = null;
+    const advance = (next: ThreadVoicePhase) => {
+      if (phase === next) return;
+      phase = next;
+      setDisplay({ kind: "active", phase: next });
+      observe({ _tag: "phase", phase: next });
+    };
+    const finish = (reason: ThreadVoiceEndReason) => {
+      if (signal.aborted) return;
       current.current = null;
       cancellation.abort();
-      clearTimeout(deadline);
+      clearTimeout(setupDeadline);
+      clearTimeout(expiration);
+      clearTimeout(connectionGrace);
+      clearInterval(samples);
+      observe({ _tag: "end", reason });
       peer?.close();
       mic?.getTracks().forEach((track) => track.stop());
-      if (audio !== null) {
-        audio.pause();
-        audio.srcObject = null;
-      }
+      playback.pause();
+      playback.srcObject = null;
+      void audioContext?.close().catch(() => undefined);
       if (serverRequested) void end({ environmentId, input: { callId } });
       onActiveChange(false);
+      if (reason !== "left-thread") setDisplay({ kind: "ended", reason });
     };
-    current.current = dispose;
+    const setupDeadline = setTimeout(() => finish("setup-timeout"), 70_000);
+    current.current = finish;
     onActiveChange(true);
-    setPhase("connecting");
+    setActivity(emptyVoiceActivity);
+    setMicName(null);
+    setExpiresAt(null);
+    advance("microphone");
+    try {
+      audioContext = new AudioContext();
+      void audioContext.resume().catch(() => undefined);
+    } catch {
+      // A metering failure should not prevent a call.
+    }
     try {
       mic = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
-    } catch {
-      if (!signal.aborted)
-        fail(gt("Could not open the microphone. Allow microphone access, then try again."));
+    } catch (error) {
+      finish(
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "microphone-blocked"
+          : "microphone-unavailable",
+      );
       return;
     }
     if (signal.aborted) {
@@ -138,9 +253,26 @@ export function ThreadVoiceCallButton({
     try {
       const track = mic.getAudioTracks()[0];
       if (track === undefined) {
-        fail(gt("Could not open the microphone. Allow microphone access, then try again."));
+        finish("microphone-unavailable");
         return;
       }
+      const reportMic = () => {
+        if (signal.aborted) return;
+        observe({
+          _tag: "microphone",
+          state: track.readyState,
+          muted: track.muted,
+          enabled: track.enabled,
+        });
+        if (track.readyState === "ended") finish("microphone-ended");
+      };
+      for (const event of ["mute", "unmute", "ended"])
+        track.addEventListener(event, reportMic, { signal });
+      setMicName(track.label || gt("Default microphone"));
+      reportMic();
+      if (signal.aborted) return;
+      if (audioContext !== null) samples = meterMicrophone(audioContext, mic, meter);
+
       const rtc = new RTCPeerConnection({ bundlePolicy: "max-bundle" });
       peer = rtc;
       const transceiver = rtc.addTransceiver(track, { direction: "sendrecv", streams: [mic] });
@@ -149,76 +281,242 @@ export function ThreadVoiceCallButton({
       );
       if (opus !== undefined && opus.length > 0) transceiver.setCodecPreferences(opus);
       const channel = rtc.createDataChannel("oai-events");
-      channel.onclose = () => {
-        if (!signal.aborted) hangUp();
-      };
-      channel.onmessage = ({ data }) => {
-        if (typeof data !== "string" || signal.aborted) return;
-        try {
-          if (JSON.parse(data)?.type === "session.closed") hangUp();
-        } catch {
-          return;
-        }
-      };
-      const playback = new Audio();
-      audio = playback;
-      rtc.ontrack = ({ track: remote }) => {
+      const updatePeer = () => {
         if (signal.aborted) return;
-        playback.srcObject = new MediaStream([remote]);
-        void playback.play().catch(() => {
-          if (!signal.aborted)
-            fail(gt("The browser blocked call audio. Allow sound for this site and try again."));
+        observe({
+          _tag: "peer",
+          connection: rtc.connectionState,
+          ice: rtc.iceConnectionState,
+          gathering: rtc.iceGatheringState,
+          dataChannel: channel.readyState,
         });
-      };
-      rtc.onconnectionstatechange = () => {
-        if (signal.aborted) return;
-        if (rtc.connectionState === "connected") {
-          clearTimeout(deadline);
-          setPhase("live");
+        if (
+          rtc.connectionState === "failed" ||
+          rtc.iceConnectionState === "failed" ||
+          channel.readyState === "closed"
+        ) {
+          finish("connection-lost");
+        } else if (
+          rtc.connectionState === "disconnected" ||
+          rtc.iceConnectionState === "disconnected"
+        ) {
+          advance("reconnecting");
+          if (connectionGrace === undefined) {
+            connectionGrace = setTimeout(() => finish("connection-lost"), 5_000);
+          }
+        } else if (rtc.connectionState === "connected" && channel.readyState === "open") {
+          clearTimeout(connectionGrace);
+          connectionGrace = undefined;
+          clearTimeout(setupDeadline);
+          advance("connected");
         }
-        if (rtc.connectionState === "failed" || rtc.connectionState === "disconnected") {
-          fail(gt("The voice connection was interrupted. Start a new call to continue."));
-        }
       };
+      rtc.onicegatheringstatechange = updatePeer;
+      rtc.oniceconnectionstatechange = updatePeer;
+      rtc.onconnectionstatechange = updatePeer;
+      channel.onopen = updatePeer;
+      channel.onclose = updatePeer;
+      channel.onerror = () => finish("connection-lost");
+      channel.onmessage = ({ data }) => {
+        if (signal.aborted || typeof data !== "string") return;
+        const received = receiveVoiceActivity(data, performance.now());
+        if (received.type === "ended") finish(received.reason);
+        if (received.type === "activity") setActivity(received.update);
+      };
+      rtc.ontrack = ({ track: remote }) => {
+        if (signal.aborted || remote.kind !== "audio") return;
+        observe({ _tag: "playback", state: "track" });
+        playback.srcObject = new MediaStream([remote]);
+        void playback
+          .play()
+          .then(() => {
+            if (!signal.aborted) observe({ _tag: "playback", state: "playing" });
+          })
+          .catch(() => {
+            if (signal.aborted) return;
+            observe({ _tag: "playback", state: "blocked" });
+            finish("playback-blocked");
+          });
+      };
+      advance("gathering");
       await rtc.setLocalDescription(await rtc.createOffer());
       await waitForCandidates(rtc, signal);
       if (signal.aborted) return;
       const sdp = rtc.localDescription?.sdp;
       if (sdp === undefined) {
-        fail(callFailure(null));
+        finish("connection");
         return;
       }
+      advance("placing");
       serverRequested = true;
+      const expires = Date.now() + THREAD_VOICE_MAX_DURATION_MS;
       const result = await start({ environmentId, input: { callId, threadId, sdp } }, { signal });
       if (signal.aborted) return;
       if (result._tag !== "Success") {
-        fail(callFailure(squashAtomCommandFailure(result)));
+        const error = squashAtomCommandFailure(result);
+        finish(isThreadVoiceError(error) ? error.reason : "connection");
         return;
       }
+      setExpiresAt(expires);
+      expiration = setTimeout(() => finish("expired"), Math.max(0, expires - Date.now()));
+      advance("connecting");
       await rtc.setRemoteDescription({ type: "answer", sdp: result.value.sdp });
     } catch {
-      if (!signal.aborted) fail(callFailure(null));
+      finish("connection");
     }
   };
 
-  const label = phase === "idle" ? gt("Start voice call") : gt("Hang up voice call");
-  const active = phase !== "idle";
+  const active = display.kind === "active";
+  const label = active ? gt("Hang up voice call") : gt("Start voice call");
+  const tooltip = available || active ? label : gt("Send the first message before calling");
   return (
-    <SharedTooltipTrigger
-      label={label}
-      render={
-        <Button
-          type="button"
-          size="icon-sm"
-          variant={active ? "destructive" : "ghost"}
-          aria-label={label}
-          disabled={!active && (blocked || !allowed)}
-          onClick={active ? hangUp : () => void placeCall()}
-          className="shrink-0"
-        >
-          {active ? <PhoneOffIcon /> : <PhoneIcon />}
-        </Button>
-      }
-    />
+    <>
+      {statusTarget !== null &&
+        display.kind !== "idle" &&
+        createPortal(
+          <CallStatus
+            display={display}
+            activity={activity}
+            micName={micName}
+            expiresAt={expiresAt}
+            meter={meter}
+            dismiss={() => setDisplay({ kind: "idle" })}
+          />,
+          statusTarget,
+        )}
+      <SharedTooltipTrigger
+        label={tooltip}
+        render={
+          <Button
+            type="button"
+            size="icon-sm"
+            variant={active ? "destructive" : "ghost"}
+            aria-label={label}
+            disabled={!active && (blocked || !allowed)}
+            onClick={active ? () => current.current?.("hung-up") : () => void placeCall()}
+            className="shrink-0"
+          >
+            {active ? <PhoneOffIcon /> : <PhoneIcon />}
+          </Button>
+        }
+      />
+    </>
+  );
+}
+
+function meterMicrophone(
+  context: AudioContext,
+  stream: MediaStream,
+  meter: { readonly current: HTMLMeterElement | null },
+) {
+  const analyser = context.createAnalyser();
+  analyser.fftSize = 512;
+  context.createMediaStreamSource(stream).connect(analyser);
+  const waveform = new Float32Array(analyser.fftSize);
+  return setInterval(() => {
+    const element = meter.current;
+    if (element === null) return;
+    analyser.getFloatTimeDomainData(waveform);
+    const rms = Math.sqrt(
+      waveform.reduce((sum, sample) => sum + sample * sample, 0) / waveform.length,
+    );
+    element.value = Math.min(1, rms * 5);
+  }, 100);
+}
+
+function CallStatus({
+  display,
+  activity,
+  micName,
+  expiresAt,
+  meter,
+  dismiss,
+}: {
+  readonly display: Exclude<CallDisplay, { kind: "idle" }>;
+  readonly activity: VoiceActivity;
+  readonly micName: string | null;
+  readonly expiresAt: number | null;
+  readonly meter: React.RefObject<HTMLMeterElement | null>;
+  readonly dismiss: () => void;
+}) {
+  const gt = useGT();
+  const { user, assistant } = activity.transcript;
+  return (
+    <section
+      aria-label={gt("Thread voice call")}
+      data-voice-phase={display.kind === "active" ? display.phase : "ended"}
+      className="mx-3 mb-3 min-w-0 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs sm:mx-4"
+    >
+      {display.kind === "ended" ? (
+        <div className="flex items-start justify-between gap-2">
+          <div role="status" className="leading-relaxed">
+            <p className="font-medium">{gt("Voice call ended")}</p>
+            <p className="text-muted-foreground">{endMessage(gt, display.reason)}</p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={gt("Dismiss call status")}
+            onClick={dismiss}
+          >
+            <XIcon />
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-2">
+            <p role="status" className="font-medium">
+              {phaseLabel(gt, display.phase)}
+            </p>
+            {expiresAt !== null ? <CallClock deadline={expiresAt} /> : null}
+          </div>
+          {micName !== null ? (
+            <div className="mt-1 flex items-center gap-2 text-muted-foreground">
+              <MicIcon aria-hidden="true" className="size-3 shrink-0" />
+              <span className="min-w-0 truncate">{micName}</span>
+              <meter
+                ref={meter}
+                aria-label={gt("Microphone level")}
+                min={0}
+                max={1}
+                defaultValue={0}
+                className="h-2 w-16 shrink-0"
+              />
+            </div>
+          ) : null}
+          {user.text || assistant.text || activity.handoffs.length > 0 ? (
+            <dl className="mt-2 max-h-28 space-y-1 overflow-y-auto border-t border-border/60 pt-2">
+              {user.text ? <TranscriptRow label={gt("You")} text={user.text} /> : null}
+              {assistant.text ? (
+                <TranscriptRow label={gt("ChatGPT voice")} text={assistant.text} />
+              ) : null}
+              {activity.handoffs.map((handoff) => (
+                <TranscriptRow
+                  key={handoff.id}
+                  label={gt("Thread agent")}
+                  text={
+                    handoff.answered === null
+                      ? gt("Handoff in progress…")
+                      : gt("Answered in {seconds}s", {
+                          seconds: ((handoff.answered - handoff.started) / 1000).toFixed(1),
+                        })
+                  }
+                />
+              ))}
+            </dl>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
+function TranscriptRow({ label, text }: { readonly label: string; readonly text: string }) {
+  return (
+    <div className="flex gap-2 break-words">
+      <dt className="w-24 shrink-0 text-muted-foreground">{label}</dt>
+      <dd className="min-w-0">{text}</dd>
+    </div>
   );
 }
