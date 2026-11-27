@@ -164,6 +164,7 @@ export interface ThreadManagementSendInput {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadManagementSendMode;
+  readonly steerTargetRunId?: RunId;
   /** Start a new provider session; the orchestrator queues it instead of steering. */
   readonly freshContext?: boolean;
   /** Ask the run for a result as data matching this JSON Schema; it is queued, never steered. */
@@ -925,7 +926,10 @@ const make = Effect.gen(function* () {
         ? "queue"
         : input.mode;
     const explicitSteer = mode === "steer" || mode === "restart";
-    const missingSteeringTarget = explicitSteer && steerableRun === undefined;
+    const missingSteeringTarget =
+      explicitSteer &&
+      (steerableRun === undefined ||
+        (input.steerTargetRunId !== undefined && steerableRun.id !== input.steerTargetRunId));
     // A command receipt outlives its target turn. Dispatch validates and replays it.
     if (missingSteeringTarget && !(yield* hasReceipt(input.commandId))) {
       return yield* new ThreadManagementNoSteerableRunError({
@@ -938,7 +942,11 @@ const make = Effect.gen(function* () {
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
-    if ((explicitSteer || mode === "auto") && steerableRun !== undefined) {
+    if (
+      !missingSteeringTarget &&
+      (explicitSteer || mode === "auto") &&
+      steerableRun !== undefined
+    ) {
       dispatchMode = {
         type: mode === "restart" ? "restart_active" : "steer_active",
         targetRunId: steerableRun.id,
